@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -27,9 +28,12 @@ def run(folder, config):
     store.put('saved',dict(id='cloud',enabled=True,notify_enabled=True,filters=filters))
     engine=NoticeEngine(store,ROOT)
     engine.start(filters)
-    if not engine.lock.acquire(timeout=1500):
-        engine.cancel.set()
-        raise RuntimeError('检查超时；本次不更新缓存基线')
+    deadline = time.monotonic() + 1500
+    while not engine.lock.acquire(timeout=min(30, max(0, deadline-time.monotonic()))):
+        print(engine.state.get('message') or '正在等待当前来源完成', flush=True)
+        if time.monotonic() >= deadline:
+            engine.cancel.set()
+            raise RuntimeError('检查超时；本次不更新缓存基线')
     engine.lock.release()
     report=next(r for r in store.all('runs') if r['id']==engine.state['run_id'])
     alerts=[a for a in store.all('alerts') if not a['read']]
