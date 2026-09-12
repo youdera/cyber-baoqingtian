@@ -16,5 +16,5 @@ CANDIDATES = [
 def catalog():
     return [dict(s, enabled=True) for s in SOURCES] + [
         dict(s, enabled=False, max_pages=1, history=False, note='候选入口：尚未接入正式公告索引，巡检只检查当前目录。')
-        for s in CANDIDATES + DIRECTORY_SEEDS
+        for s in CANDIDATES + DIRECTORY_SEEDS if s['id'] not in {enabled['id'] for enabled in SOURCES}
     ]

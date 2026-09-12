@@ -32,13 +32,16 @@
     <section id="browse" class="view active">
       <div class="page-heading"><h1>查询招录公告</h1><p>开源招录公示检索与提醒工具，自动汇集指定时间范围内的官方公示链接。</p></div>
       <form id="notice-form" class="quick-form">
-        <div class="form-grid"><label>公示发布 · 开始月份<input type="month" name="month_from" required></label><label>结束月份<input type="month" name="month_to" required></label></div>
+        <label>按什么时间查<select id="time-mode"><option value="publication">公示发布时间</option><option value="exam">考试／招考年份</option><option value="both">两个条件同时满足</option></select></label>
+        <div id="publication-fields" class="form-grid"><label>公示开始月份<input type="month" name="month_from"></label><label>公示结束月份<input type="month" name="month_to"></label></div>
+        <div id="exam-fields" class="form-grid" hidden><label>招考开始年份<input type="number" name="year_from" min="1000" max="9999" placeholder="例如 2025"></label><label>招考结束年份<input type="number" name="year_to" min="1000" max="9999" placeholder="选填"></label></div>
+        <p class="field-note">两类时间可任选一种，也可组合。只填一端即查该月或该年。例如：2025年度考试可在2026年公示；仅选考试年份时不限制公示时间。</p>
         <label>招录范围<select name="area_scope" id="area-scope"><option value="province">省内招录</option><option value="national">全国／中央招录</option><option value="all">全部已接入范围</option></select></label>
         <div class="form-grid"><label>招录类型<select name="kind" id="kind-select"><option value="">全部类型</option><option>国考</option><option>省考</option><option>事业单位</option></select></label><label id="region-field">省份<select name="region" id="region-select" required><option value="">请选择省份</option></select></label></div>
         <p id="area-help" class="field-note"></p>
-        <details class="more-options"><summary>更多条件：招考年度、公告阶段、发布栏目</summary>
+        <details class="more-options"><summary>更多条件：公告阶段、发布栏目</summary>
         <div class="form-grid"><label>公告范围<select name="notice_scope"><option value="public">录聘公示及更正、撤销</option><option value="all">全部招录阶段</option></select></label><label>发布栏目<select name="source_id" id="source-select"><option value="">全部已接入栏目</option></select></label></div>
-        <div class="form-grid"><label>招考开始年份<input type="number" name="year_from" min="1000" max="9999" placeholder="选填"></label><label>招考结束年份<input type="number" name="year_to" min="1000" max="9999" placeholder="选填"></label></div><p>包含首尾年份；留空则不限招考年度。查单年时两栏填同一年。公告发布时间与招考年度可能不同。</p></details>
+        </details>
         <div class="query-submit"><button class="primary" type="submit" id="search-submit">查询已采集公示</button><button type="button" id="refresh-sources">检查官网更新</button><button type="button" id="save-query" disabled>关注并设置闹钟</button></div>
         <p id="query-error" role="alert"></p>
       </form>
@@ -47,7 +50,7 @@
       <p class="field-note">阶段由公告标题初步识别，以原文为准；录聘公示不等于已入职。更新指本机检测到标题等元数据变化，不包括附件内容变化。以上筛选仅影响当前结果，不随查询条件保存。</p><div id="notice-list"></div>
     </section>
     <section id="saved" class="view"><div class="page-heading"><h1>关注与闹钟</h1></div><div id="saved-list"></div></section>
-    <section id="alerts" class="view"><div class="page-heading"><h1>新公示提醒</h1></div><p>显示开启闹钟后新发现或发生元数据变化的公告，历史补采也可能产生提醒。未知年份、地区等信息会标为待核对。</p><div class="query-submit"><button id="enable-browser-alerts">开启此浏览器通知</button><button id="read-alerts">本页提醒标为已读</button></div><p id="browser-alert-status" role="status">浏览器通知需要页面保持打开；关闭网页后，站内提醒仍由运行中的本机服务保存。</p><div id="alert-list"></div></section>
+    <section id="alerts" class="view"><div class="page-heading"><h1>新公示提醒</h1></div><p>显示开启闹钟后新发现或发生元数据变化的公告，历史补采也可能产生提醒。未知年份、地区等信息会标为待核对。</p><div class="query-submit"><button id="enable-browser-alerts">开启此浏览器通知</button><button id="read-alerts">本批提醒标为已读</button></div><p id="browser-alert-status" role="status">浏览器通知需要页面保持打开；关闭网页后，站内提醒仍由运行中的本机服务保存。</p><p id="alert-summary" role="status"></p><div id="alert-list"></div></section>
     <section id="sources" class="view"><div class="page-heading"><h1>来源与覆盖</h1></div><div id="source-list"></div><h2>官方来源目录与自动巡检</h2><p id="source-catalog-count"></p><p>爬虫按登记目录批量检查网站，记录访问和解析情况。候选网站通过适配及测试后才加入公告索引。GitHub每周巡检一次，报告与本机分别保存。</p><div class="query-submit"><button id="audit-sources">巡检全部登记入口</button><button id="stop-source-audit" hidden>停止巡检</button></div><p id="source-audit-status" role="status"></p><div id="source-catalog-list"></div></section>
     <section id="runs" class="view"><div class="page-heading"><h1>检查记录</h1></div><div id="run-list"></div></section>
     <section id="guide" class="view">
@@ -76,4 +79,4 @@
       </div></div>
     </section>
 <footer>赛博包青天 · 代码基于 MIT 许可证开源，欢迎使用、<a href="https://github.com/youdera/cyber-baoqingtian" target="_blank" rel="noreferrer">收藏（Star）和参与更新 ↗</a> <a href="https://developer.riotgames.com/docs/lol#data-dragon" target="_blank" rel="noreferrer">图标 © Riot Games</a><b>0.2.0</b></footer></main>
-<dialog id="save-dialog"><form id="save-form"><div class="dialog-head"><h2>关注条件与闹钟</h2><button type="button" id="close-save" aria-label="关闭">×</button></div><p id="save-range"></p><label class="check"><input type="checkbox" name="enabled">开启本机定时检查</label><label class="check"><input type="checkbox" name="notify_enabled" checked>新发现或更新公告时生成站内提醒</label><label>定时方式<select name="schedule_mode"><option value="daily">每天固定时间（北京时间）</option><option value="interval">按间隔检查</option></select></label><label>每天检查时间<input type="time" name="daily_time" value="09:00" required></label><label>间隔检查频率<select name="interval_hours"><option value="24">24小时</option><option value="12">12小时</option><option value="6">6小时</option></select></label><p>本机定时需要程序保持运行；关闭后不检查，重启后合并补查。日期范围固定，关注后续月份请将结束月份设到年底或所需月份。提醒条件采用上次查询范围，不含下方临时展示筛选。GitHub云端定时需另行配置仓库，网站保存不会同步到GitHub。</p><p id="save-error" role="alert"></p><button type="submit" class="primary">保存关注</button></form></dialog></body></html>
+<dialog id="save-dialog"><form id="save-form"><div class="dialog-head"><h2>关注条件与闹钟</h2><button type="button" id="close-save" aria-label="关闭">×</button></div><p id="save-range"></p><label class="check"><input type="checkbox" name="enabled">开启本机定时检查</label><label class="check"><input type="checkbox" name="notify_enabled" checked>新发现或更新公告时生成站内提醒</label><label>定时方式<select name="schedule_mode"><option value="daily">每天固定时间（北京时间）</option><option value="interval">按间隔检查</option></select></label><label>每天检查时间<input type="time" name="daily_time" value="09:00" required></label><label>间隔检查频率<select name="interval_hours"><option value="24">24小时</option><option value="12">12小时</option><option value="6">6小时</option></select></label><p>本机定时需要程序保持运行；关闭后不检查，重启后合并补查。时间条件固定；按公示时间关注后续月份，请将结束月份设到所需月份。只按招考年度关注时不限制公示日期。提醒条件采用上次查询范围，不含下方临时展示筛选。GitHub云端定时需另行配置仓库，网站保存不会同步到GitHub。</p><p id="save-error" role="alert"></p><button type="submit" class="primary">保存关注</button></form></dialog></body></html>

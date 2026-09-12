@@ -85,7 +85,7 @@ class NoticeTests(unittest.TestCase):
         f=validate_filters(dict(month_from='2024-02',month_to='2024-02'))
         self.assertEqual(f['date_to'],'2024-02-29')
         self.assertEqual(validate_filters(dict(month_from='2023-12',month_to='2024-03'))['date_to'],'2024-03-31')
-        for d in [dict(month_from='2024-03',month_to='2024-02'),dict(month_from='2024-02',month_to='2024-13'),dict(month_from='2024-02',month_to='2024-02',year_from=2020),dict(month_from='2024-02',month_to='2024-02',year_from=2026,year_to=2015)]:
+        for d in [dict(month_from='2024-03',month_to='2024-02'),dict(month_from='2024-02',month_to='2024-13'),dict(month_from='2024-02',month_to='2024-02',year_from=2026,year_to=2015)]:
             with self.assertRaises(ValueError):validate_filters(d)
 
     def test_optional_year_and_unknown_date(self):

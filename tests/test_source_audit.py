@@ -15,9 +15,9 @@ from wuzhong.source_catalog import catalog
 class SourceAuditTests(unittest.TestCase):
     def test_catalog_is_fixed_unique_https_and_separates_candidates(self):
         rows=catalog()
-        self.assertEqual(len(rows),63)
+        self.assertEqual(len(rows),64)
         self.assertEqual(len({x['id'] for x in rows}),len(rows))
-        self.assertEqual(sum(x['enabled'] for x in rows),3)
+        self.assertEqual(sum(x['enabled'] for x in rows),6)
         self.assertTrue(all(urlparse(x['url']).scheme=='https' for x in rows))
         self.assertTrue(all(urlparse(x['url']).hostname.endswith('.gov.cn') for x in rows))
 
@@ -59,7 +59,7 @@ class SourceAuditTests(unittest.TestCase):
     def test_api_auth_and_shared_collection_lock(self):
         with tempfile.TemporaryDirectory() as root:
             app=create_app(root);client=app.test_client();state=client.get('/api/notices/state').json
-            self.assertEqual(len(state['catalog']),63)
+            self.assertEqual(len(state['catalog']),64)
             self.assertEqual(client.post('/api/notices/source-audit').status_code,403)
             engine=app.extensions['engine'];engine.lock.acquire()
             try:self.assertEqual(client.post('/api/notices/source-audit',headers={'X-Local-Token':state['token']}).status_code,409)

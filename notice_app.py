@@ -10,7 +10,7 @@ import webbrowser
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
-from wuzhong.notices import NoticeStore, NoticeEngine, SOURCES, REGIONS, compatible, relevance, validate_filters, now, stage, next_check
+from wuzhong.notices import NoticeStore, NoticeEngine, SOURCES, REGIONS, compatible, relevance, validate_filters, now, stage, next_check, exam_year_from_title
 from wuzhong.source_audit import SourceAuditor
 from wuzhong.source_catalog import catalog
 
@@ -46,8 +46,8 @@ def create_app(data_dir=None, schedule=False):
 
     @app.get('/api/notices/state')
     def state():
-        alerts=sorted(store.all('alerts'),key=lambda a:a['created'],reverse=True)
-        return jsonify(token=token,sources=SOURCES,catalog=catalog(),source_audit=dict(auditor.state,report=auditor.latest()),regions=REGIONS,engine=engine.state,runs=sorted(store.all('runs'),key=lambda r:r['started'],reverse=True)[:30],saved=store.all('saved'),alerts=alerts[:200],unread=sum(not a['read'] for a in alerts),count=len(store.all('entries')),version='0.2.0')
+        alerts=sorted(store.all('alerts'),key=lambda a:(not a['read'],a['created']),reverse=True)
+        return jsonify(token=token,sources=SOURCES,catalog=catalog(),source_audit=dict(auditor.state,report=auditor.latest()),regions=REGIONS,engine=engine.state,runs=sorted(store.all('runs'),key=lambda r:r['started'],reverse=True)[:30],saved=store.all('saved'),alerts=alerts[:200],alert_total=len(alerts),unread=sum(not a['read'] for a in alerts),count=len(store.all('entries')),version='0.2.0')
 
     @app.post('/api/notices/source-audit')
     def source_audit():
@@ -78,6 +78,7 @@ def create_app(data_dir=None, schedule=False):
         except (ValueError,TypeError) as e:return jsonify(error=str(e)),400
         records=[]
         for n in store.all('entries'):
+            n=dict(n,exam_year=exam_year_from_title(n['title']))
             status=relevance(n,f)
             if status:records.append(dict(n,stage=stage(n['title']),match_status=status))
         records.sort(key=lambda n:(n['published'] or '',n['title']),reverse=True)
@@ -133,10 +134,14 @@ def create_app(data_dir=None, schedule=False):
     return app
 
 
-if __name__=='__main__':
+def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--port',type=int,default=8765);parser.add_argument('--open',action='store_true')
     args=parser.parse_args()
     app=create_app(schedule=True)
     if args.open:threading.Timer(1.5,lambda:webbrowser.open(f'http://127.0.0.1:{args.port}')).start()
     app.run(host='127.0.0.1',port=args.port,debug=False,threaded=True,use_reloader=False)
+
+
+if __name__=='__main__':
+    main()

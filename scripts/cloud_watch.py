@@ -16,6 +16,21 @@ def markdown(value):
     return str(value).replace('@','＠').replace('<','＜').replace('>','＞').replace('[','［').replace(']','］').replace('\n',' ')
 
 
+def filter_summary(filters):
+    """Describe independent date/year constraints after shared validation."""
+    publication = (f"{filters['date_from']} 至 {filters['date_to']}"
+                   if filters.get('date_from') else '不限')
+    examination = (f"{filters['year_from']} 至 {filters['year_to']}"
+                   if filters.get('year_from') else '不限')
+    area = {'province': '省内招录', 'national': '全国／中央招录',
+            'all': '全部已接入范围'}[filters.get('area_scope', 'all')]
+    if filters.get('region'):
+        area += f" · {filters['region']}"
+    return [f'公告发布时间：{publication}', f'招考年度：{examination}',
+            f'招录范围：{markdown(area)}',
+            '公告发布时间与招考年度分别筛选；同时设置时需同时符合。']
+
+
 def run(folder, config):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     store=NoticeStore(folder)
@@ -41,7 +56,7 @@ def run(folder, config):
     health_key=json.dumps(health,sort_keys=True,ensure_ascii=False)
     changed_health=health_key!=previous.get('health')
     lines=['# 官方公示检查报告', '', f'检查时间（UTC）：{now()}',
-           f"公告日期：{filters['date_from']} 至 {filters['date_to']}；招考年度：{filters['year_from'] or '不限'} 至 {filters['year_to'] or '不限'}",'',
+           *filter_summary(filters), '',
            '仅覆盖已接入栏目；不读取名单附件、不查询个人。', '']
     for s in report['sources']:
         lines.append(f"- {markdown(s['name'])}：{s['status']}，{s['pages']}页、{s['found']}条目录记录。{markdown('；'.join(s['warnings']))}")

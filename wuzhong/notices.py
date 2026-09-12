@@ -17,6 +17,7 @@ from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
+from .extra_sources import EXTRA_SOURCES, parse_extra
 
 REGIONS = '北京 天津 河北 山西 内蒙古 辽宁 吉林 黑龙江 上海 江苏 浙江 安徽 福建 江西 山东 河南 湖北 湖南 广东 广西 海南 重庆 四川 贵州 云南 西藏 陕西 甘肃 青海 宁夏 新疆 兵团'.split()
 SOURCES = [
@@ -49,12 +50,16 @@ def validate_filters(data):
         if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}', value):
             raise ValueError('请选择开始和结束年月')
         return date.fromisoformat(value+'-01')
-    start, end = month(data.get('month_from')), month(data.get('month_to'))
-    if start > end:
-        raise ValueError('开始月份不能晚于结束月份')
+    month_from, month_to = data.get('month_from'), data.get('month_to')
+    # One supplied endpoint means a single month/year, never an open-ended crawl.
+    has_month = month_from not in ('', None) or month_to not in ('', None)
+    start = month(month_from if month_from not in ('', None) else month_to) if has_month else None
+    end = month(month_to if month_to not in ('', None) else month_from) if has_month else None
+    if has_month and start > end:
+        raise ValueError('公示开始月份不能晚于结束月份')
     year_from, year_to = data.get('year_from'), data.get('year_to')
-    if (year_from in ('', None)) != (year_to in ('', None)):
-        raise ValueError('招考起止年份需同时填写，或同时留空')
+    if year_from in ('', None): year_from = year_to
+    if year_to in ('', None): year_to = year_from
     if year_from not in ('', None):
         if not re.fullmatch(r'\d{4}', str(year_from)) or not re.fullmatch(r'\d{4}', str(year_to)):
             raise ValueError('招考年度需为四位年份')
@@ -63,6 +68,8 @@ def validate_filters(data):
             raise ValueError('招考开始年份不能晚于结束年份')
     else:
         year_from = year_to = None
+    if not has_month and not year_from:
+        raise ValueError('请至少设置公示发布时间或招考年度；填一个月份或年份也可以查询')
     region, kind = data.get('region', ''), data.get('kind', '')
     if region not in ['', *REGIONS] or kind not in ('', '国考', '省考', '事业单位'):
         raise ValueError('地区或招录类型无效')
@@ -76,10 +83,13 @@ def validate_filters(data):
     source_id, scope = data.get('source_id', ''), data.get('notice_scope', 'all')
     if source_id not in ['', *[s['id'] for s in SOURCES]] or scope not in ('all', 'public'):
         raise ValueError('公告来源或范围无效')
-    return dict(month_from=start.strftime('%Y-%m'), month_to=end.strftime('%Y-%m'), date_from=start.isoformat(), date_to=end.replace(day=calendar.monthrange(end.year, end.month)[1]).isoformat(), year_from=year_from, year_to=year_to, region=region, kind=kind, source_id=source_id, notice_scope=scope, area_scope=area_scope)
+    return dict(month_from=start.strftime('%Y-%m') if start else None, month_to=end.strftime('%Y-%m') if end else None, date_from=start.isoformat() if start else None, date_to=end.replace(day=calendar.monthrange(end.year, end.month)[1]).isoformat() if end else None, year_from=year_from, year_to=year_to, region=region, kind=kind, source_id=source_id, notice_scope=scope, area_scope=area_scope)
 
 
-SOURCE_AREAS = {'stats': 'national', 'fujian': 'province', 'guangdong': 'province'}
+SOURCES.extend(EXTRA_SOURCES)
+SOURCE_AREAS = {'stats': 'national', 'fujian': 'province', 'guangdong': 'province', **{s['id']:s['area_scope'] for s in EXTRA_SOURCES}}
+for _source in SOURCES:
+    _source['area_scope'] = SOURCE_AREAS[_source['id']]
 
 
 def area_matches(source_id, f):
@@ -96,7 +106,7 @@ def relevance(n, f):
     if not area_matches(n.get('source_id'), f): return None
     if f.get('source_id') and n['source_id'] != f['source_id']: return None
     if f.get('notice_scope') == 'public' and stage(n['title']) not in ('录聘公示', '更正／补充', '撤销通知'): return None
-    if n['published'] and not f['date_from'] <= n['published'] <= f['date_to']:
+    if f.get('date_from') and n['published'] and not f['date_from'] <= n['published'] <= f['date_to']:
         return None
     if f['year_from'] and n['exam_year'] and not f['year_from'] <= n['exam_year'] <= f['year_to']:
         return None
@@ -104,7 +114,7 @@ def relevance(n, f):
         return None
     if f['region'] and n['region'] and n['region'] != f['region']:
         return None
-    return 'review' if not n['published'] or (f['year_from'] and not n['exam_year']) or (f['region'] and not n['region']) or (f['kind'] and not n['kind']) else 'matched'
+    return 'review' if (f.get('date_from') and not n['published']) or (f['year_from'] and not n['exam_year']) or (f['region'] and not n['region']) or (f['kind'] and not n['kind']) else 'matched'
 
 
 def stage(title):
@@ -117,7 +127,22 @@ def stage(title):
     return '招录信息'
 
 
+def exam_year_from_title(title):
+    """Conservative title evidence; publication dates never imply an exam year."""
+    matches = list(re.finditer(r'(20\d{2})\s*年(?:度)?', title))
+    years = {int(m[1]) for m in matches}
+    if len(years) != 1:
+        return None
+    for m in matches:
+        tail = title[m.end():]
+        if re.match(r'\s*(?:\d{1,2}月|应届|毕业|入学|出生|参加工作)', tail):
+            return None
+    return years.pop()
+
+
 def listing(html, source, url):
+    if source['id'] in {s['id'] for s in EXTRA_SOURCES}:
+        return parse_extra(html, source, url)
     soup = BeautifulSoup(html, 'html.parser')
     base = urlparse(source['url'])
     items = {}
@@ -140,10 +165,9 @@ def listing(html, source, url):
             try: published = date(*map(int, dates[-1])).isoformat()
             except ValueError: pass
         # URL dates are not substituted for missing publication metadata.
-        y = re.search(r'(20\d{2})\s*年(?:度)?', title)
         kind = '事业单位' if '事业单位' in title else source['kind']
         if not kind and '公务员' in title: kind = '省考'
-        items[target] = dict(id=hashlib.sha256(target.encode()).hexdigest(), source_id=source['id'], source=source['name'], owner=source['owner'], title=title, url=target, published=published, exam_year=int(y[1]) if y else None, kind=kind, region=source['region'], stage=stage(title))
+        items[target] = dict(id=hashlib.sha256(target.encode()).hexdigest(), source_id=source['id'], source=source['name'], owner=source['owner'], title=title, url=target, published=published, exam_year=exam_year_from_title(title), kind=kind, region=source['region'], stage=stage(title))
     next_url = None
     if source['id'] == 'stats':
         count = re.search(r'm_nRecordCount\s*=\s*["\']?(\d+)', html)
@@ -281,8 +305,9 @@ class NoticeStore:
         with self.db() as db:
             row = db.execute('SELECT data FROM entries WHERE id=?',(item['id'],)).fetchone()
             prior=json.loads(row[0]) if row else None
-            changed=bool(prior and any(item[k] != prior.get(k) for k in item))
+            changed=bool(prior and any(item[k] != prior.get(k) for k in item if k not in ('revision','first_seen','checked_at','changed_at')))
             item=dict(item,first_seen=prior['first_seen'] if prior else now(),checked_at=now(),changed_at=now() if changed else prior.get('changed_at') if prior else None)
+            item['revision']=(prior.get('revision',1)+int(changed)) if prior else 1
             db.execute('INSERT OR REPLACE INTO entries VALUES (?,?)',(item['id'],json.dumps(item,ensure_ascii=False)))
             if not prior or changed:
                 for row in db.execute('SELECT data FROM saved').fetchall():
@@ -290,6 +315,7 @@ class NoticeStore:
                     if not saved.get('enabled') or not saved.get('notify_enabled'): continue
                     match = relevance(item, saved['filters'])
                     if not match: continue
+                    # revision distinguishes A -> B -> A from a repeated unchanged fetch.
                     fingerprint = {k:v for k,v in item.items() if k not in ('first_seen','checked_at','changed_at')}
                     alert_id = hashlib.sha256((saved['id'] + json.dumps(fingerprint,sort_keys=True)).encode()).hexdigest()
                     alert = dict(id=alert_id,saved_id=saved['id'],created=now(),read=False,title=item['title'],url=item['url'],source=item['source'],published=item['published'],match_status=match,event='updated' if prior else 'new')
