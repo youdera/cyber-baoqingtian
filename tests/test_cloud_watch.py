@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import tempfile
@@ -11,6 +12,21 @@ from wuzhong.notices import NoticeEngine, NoticeStore, SOURCES, Stopped, relevan
 
 
 class CloudWatchTests(unittest.TestCase):
+    def test_console_preserves_unicode_or_uses_recordable_encoding_fallback(self):
+        message = '正在检查官方栏目 · café · 🌏'
+        for encoding in ('utf-8', 'cp1252', 'ascii'):
+            with self.subTest(encoding=encoding):
+                buffer = io.BytesIO()
+                with io.TextIOWrapper(buffer, encoding=encoding, errors='strict') as stream:
+                    with patch.object(cloud_watch.sys, 'stdout', stream):
+                        cloud_watch.console(message)
+                    recorded = buffer.getvalue().decode(encoding)
+                    self.assertEqual(recorded, message.encode(encoding, errors='backslashreplace').decode(encoding)+os.linesep)
+                    if encoding == 'utf-8':
+                        self.assertIn('正在检查官方栏目', recorded)
+                    else:
+                        self.assertIn('\\u6b63', recorded)
+
     def test_source_rotation_uses_only_matching_acknowledged_checkpoint(self):
         selected = [dict(id=value) for value in ('first', 'middle', 'last')]
         marker = dict(next_source='middle')
@@ -21,6 +37,32 @@ class CloudWatchTests(unittest.TestCase):
         self.assertEqual(cloud_watch.rotated_sources([], marker, False), [])
 
     def test_timeout_waits_for_worker_then_reports_partial_and_rotates_after_ack(self):
+        self._check_timeout_waits_for_worker_then_reports_partial_and_rotates_after_ack()
+
+    def test_cp1252_console_does_not_interrupt_cancel_cleanup_report_or_ack(self):
+        buffer = io.BytesIO()
+        workers = []
+        original_thread = threading.Thread
+        def worker(*args, **kwargs):
+            instance = original_thread(*args, **kwargs)
+            workers.append(instance)
+            return instance
+        with io.TextIOWrapper(buffer, encoding='cp1252', errors='strict') as stream:
+            with patch.object(cloud_watch.sys, 'stdout', stream), \
+                 patch('wuzhong.notices.threading.Thread', side_effect=worker):
+                try:
+                    self._check_timeout_waits_for_worker_then_reports_partial_and_rotates_after_ack()
+                finally:
+                    for instance in workers:
+                        instance.join(timeout=2)
+            self.assertEqual(len(workers), 3)
+            self.assertTrue(all(not instance.is_alive() for instance in workers))
+            recorded = buffer.getvalue().decode('cp1252')
+            self.assertIn('\\u6b63', recorded)
+            self.assertIn('\\u672c\\u8f6e', recorded)
+            self.assertIn('status=partial', recorded)
+
+    def _check_timeout_waits_for_worker_then_reports_partial_and_rotates_after_ack(self):
         started, engines, closed = [], [], []
         slow = {'enabled': True}
         class FakeFetcher:
@@ -94,6 +136,14 @@ class CloudWatchTests(unittest.TestCase):
                     self.assertEqual(json.loads(Path('artifacts/pending.json').read_text())['baseline']['sources'], ['fujian', 'stats'])
                     self.assertEqual(NoticeStore('state').all('alerts'), [])
             finally:
+                # Also stop workers on a failed assertion before removing the
+                # temporary database, so a regression cannot leak a writer.
+                for instance in engines:
+                    instance.cancel.set()
+                    if instance.lock.acquire(timeout=2):
+                        instance.lock.release()
+                    else:
+                        self.fail('Simulated scan worker did not finish before temporary storage cleanup')
                 os.chdir(previous)
 
     def test_cancel_grace_failure_does_not_export_or_advance_old_baseline(self):

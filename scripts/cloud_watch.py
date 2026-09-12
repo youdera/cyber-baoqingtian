@@ -16,6 +16,14 @@ SCAN_TIMEOUT_SECONDS = 90 * 60
 CANCEL_GRACE_SECONDS = 120
 
 
+def console(message):
+    """Keep progress output readable without letting console encoding stop a scan."""
+    stream = sys.stdout
+    encoding = getattr(stream, 'encoding', None) or 'utf-8'
+    text = str(message).encode(encoding, errors='backslashreplace').decode(encoding)
+    print(text, file=stream, flush=True)
+
+
 def markdown(value):
     return str(value).replace('@','＠').replace('<','＜').replace('>','＞').replace('[','［').replace(']','］').replace('\n',' ')
 
@@ -71,19 +79,19 @@ def wait_for_engine(engine):
         if engine.lock.acquire(timeout=min(30, max(0, deadline-time.monotonic()))):
             engine.lock.release()
             return False
-        print(engine.state.get('message') or '正在等待当前来源完成', flush=True)
+        console(engine.state.get('message') or '正在等待当前来源完成')
     # Completion can race the deadline, so check once more before cancelling.
     if engine.lock.acquire(blocking=False):
         engine.lock.release()
         return False
     engine.cancel.set()
-    print('本轮检查时间预算已用完，正在等待采集线程结束后保存部分结果。', flush=True)
+    console('本轮检查时间预算已用完，正在等待采集线程结束后保存部分结果。')
     deadline = time.monotonic() + CANCEL_GRACE_SECONDS
     while time.monotonic() < deadline:
         if engine.lock.acquire(timeout=min(30, max(0, deadline-time.monotonic()))):
             engine.lock.release()
             return True
-        print('正在等待当前请求及存储收尾。', flush=True)
+        console('正在等待当前请求及存储收尾。')
     raise RuntimeError('取消后采集线程未及时退出；本次不导出待确认报告或更新基线')
 
 
@@ -208,7 +216,7 @@ def run(folder, config):
     Path('artifacts/pending.json').write_text(json.dumps(dict(ids=[a['id'] for a in alerts],baseline=dict(filters=digest,health=health_key,sources=sorted(acknowledged_sources),next_source=next_source))),encoding='utf-8')
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write(f'notify={str(should_notify).lower()}\n')
-    print(f"status={report['status']}; alerts={len(alerts)}; baseline={baseline}")
+    console(f"status={report['status']}; alerts={len(alerts)}; baseline={baseline}")
 
 
 def acknowledge(folder):
