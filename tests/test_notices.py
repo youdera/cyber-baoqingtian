@@ -30,8 +30,11 @@ class NoticeTests(unittest.TestCase):
         base=dict(month_from='2024-02',month_to='2024-02')
         provincial=validate_filters(dict(base,area_scope='province',region='广东'))
         national=validate_filters(dict(base,area_scope='national'))
-        self.assertEqual([s['id'] for s in SOURCES if compatible(s,provincial)],['guangdong','zhaoqing_recruitment','zhaoqing_civil','yangjiang_civil'])
-        self.assertEqual([s['id'] for s in SOURCES if compatible(s,national)],['stats'])
+        self.assertEqual([s['id'] for s in SOURCES if compatible(s,provincial)],
+                         ['guangdong','zhaoqing_recruitment','zhaoqing_civil','yangjiang_civil',
+                          'shantou_recruitment','huizhou_recruitment','zhongshan_recruitment','shenzhen_recruitment',
+                          'gdzz_civil','foshan_recruitment','foshan_public','zhanjiang_recruitment','dongguan_recruitment'])
+        self.assertEqual([s['id'] for s in SOURCES if compatible(s,national)],['stats','moe_civil'])
         item=listing(fixture(),SOURCES[0],SOURCES[0]['url'])[0][0]
         self.assertIsNone(relevance(item,provincial))
         self.assertEqual(relevance(item,national),'matched')

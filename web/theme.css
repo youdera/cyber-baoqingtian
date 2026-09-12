@@ -37,3 +37,4 @@ footer{flex-wrap:wrap;align-items:center;font-size:13px}footer span{display:none
 #region-field[hidden] { display: none; }
 
 #publication-fields[hidden], #exam-fields[hidden] { display: none; }
+.coverage-filter{display:block;max-width:360px;margin:18px 0}.coverage-filter select{display:block;width:100%;margin-top:8px}#region-coverage-summary,#selected-coverage-summary{line-height:1.8}

@@ -21,14 +21,28 @@ from .extra_sources import EXTRA_SOURCES, parse_extra
 from .east_sources import EAST_SOURCES, parse_east
 from .west_sources import WEST_SOURCES, parse_west
 from .gkml_sources import GKML_SOURCES, parse_gkml
+from .http_transport import P256Adapter, failure_reason
+from .expansion_north import EXPANSION_NORTH_SOURCES, parse_expansion_north
+from .expansion_east import EXPANSION_EAST_SOURCES, parse_expansion_east
+from .expansion_west import EXPANSION_WEST_SOURCES, parse_expansion_west
+from .expansion_south import EXPANSION_SOUTH_SOURCES, parse_expansion_south
+from .expansion_chongqing import EXPANSION_CHONGQING_SOURCES, parse_expansion_chongqing
 
 DIRECTORY_ADAPTERS = {
     source['id']: parser
     for group, parser in [(EXTRA_SOURCES, parse_extra), (EAST_SOURCES, parse_east),
-                          (WEST_SOURCES, parse_west), (GKML_SOURCES, parse_gkml)]
+                          (WEST_SOURCES, parse_west), (GKML_SOURCES, parse_gkml),
+                          (EXPANSION_NORTH_SOURCES, parse_expansion_north),
+                          (EXPANSION_EAST_SOURCES, parse_expansion_east),
+                          (EXPANSION_WEST_SOURCES, parse_expansion_west),
+                          (EXPANSION_SOUTH_SOURCES, parse_expansion_south),
+                          (EXPANSION_CHONGQING_SOURCES, parse_expansion_chongqing)]
     for source in group
 }
-ADDITIONAL_SOURCES = [*EXTRA_SOURCES, *EAST_SOURCES, *WEST_SOURCES, *GKML_SOURCES]
+ADDITIONAL_SOURCES = [*EXTRA_SOURCES, *EAST_SOURCES, *WEST_SOURCES, *GKML_SOURCES,
+                      *EXPANSION_NORTH_SOURCES, *EXPANSION_EAST_SOURCES,
+                      *EXPANSION_WEST_SOURCES, *EXPANSION_SOUTH_SOURCES,
+                      *EXPANSION_CHONGQING_SOURCES]
 
 REGIONS = '北京 天津 河北 山西 内蒙古 辽宁 吉林 黑龙江 上海 江苏 浙江 安徽 福建 江西 山东 河南 湖北 湖南 广东 广西 海南 重庆 四川 贵州 云南 西藏 陕西 甘肃 青海 宁夏 新疆 兵团'.split()
 SOURCES = [
@@ -144,7 +158,7 @@ def source_views(notice):
 def stage(title):
     if re.search('撤销|撤回|取消招聘', title): return '撤销通知'
     if re.search('更正|调整|补充公告', title): return '更正／补充'
-    if re.search('拟.*(?:录用|聘用|聘人员|聘人选)|拟聘(?:名单|公示)|拟录(?:人员|名单|公示)|(?:录用|聘用).*公示', title): return '录聘公示'
+    if re.search('拟.*(?:录用|聘用|聘人员|聘人选)|拟聘(?:名单|公示)|拟录(?:人员|名单|公示)|(?:录用|聘用).*公示|(?:特聘|招聘|录取)(?:人员|人选|名单).*公示', title): return '录聘公示'
     if '面试' in title: return '面试通知'
     if re.search('体检|考察', title): return '体检／考察'
     if re.search('笔试|成绩', title): return '考试通知'
@@ -228,6 +242,7 @@ class Fetcher:
         self.session.headers['User-Agent'] = UA
         self.robot = None
         self.delay, self.last = 2.0, 0.0
+        self.phase, self.transport_mode = 'directory', 'default'
 
     def check(self):
         if self.cancel.is_set(): raise Stopped()
@@ -254,6 +269,15 @@ class Fetcher:
                 try:
                     r = self.session.get(url, timeout=(6,12), stream=True, allow_redirects=False)
                     break
+                except requests.exceptions.SSLError as error:
+                    # Some sites fail OpenSSL's default curve negotiation. Retry
+                    # only that exact error once, with a standard verified curve.
+                    if attempt or self.transport_mode != 'default' or 'BAD_ECPOINT' not in str(error):
+                        raise
+                    self.session.mount(f'https://{self.host}/', P256Adapter())
+                    self.transport_mode = 'p256_compat'
+                    if self.cancel.wait(2): raise Stopped()
+                    self.last = time.monotonic()
                 except (requests.Timeout, requests.ConnectionError):
                     if attempt: raise
                     if self.cancel.wait(2): raise Stopped()
@@ -282,6 +306,7 @@ class Fetcher:
 
     def get(self, url):
         if self.robot is None:
+            self.phase = 'robots'
             text, code = self.raw(f'https://{self.host}/robots.txt')
             if code != 404 and '<html' in text.lower():
                 raise ValueError('robots返回网页而非规则，需人工核验访问要求')
@@ -289,6 +314,7 @@ class Fetcher:
             self.robot.parse([] if code == 404 else text.splitlines())
             self.delay = max(2, self.robot.crawl_delay(UA) or self.robot.crawl_delay('*') or 2)
         if not self.robot.can_fetch(UA,url): raise ValueError('站点规则不允许读取该栏目')
+        self.phase = 'directory'
         text, code = self.raw(url)
         if code == 404: raise ValueError('栏目目前返回404，需复核入口')
         return text
@@ -395,6 +421,9 @@ class NoticeEngine:
             handoff=Path(self.root)/'HANDOFF.md'
             run['handoff_digest']=hashlib.sha256(handoff.read_bytes()).hexdigest() if handoff.exists() else None
             selected=[s for s in SOURCES if compatible(s,run['filters'])]
+            order={sid:index for index,sid in enumerate(getattr(self,'source_order',[]))}
+            if order:
+                selected.sort(key=lambda source:order.get(source['id'],len(order)))
             for source in selected:
                 if self.cancel.is_set(): raise Stopped()
                 report=dict(id=source['id'],name=source['name'],status='running',pages=0,found=0,dates=[],warnings=[])
@@ -425,8 +454,9 @@ class NoticeEngine:
                     report['status']='cancelled';raise
                 except Exception as e:
                     report['status']='partial' if report['pages'] else 'failed'
-                    report['warnings'].append(str(e) if isinstance(e,ValueError) else '网络请求失败，请稍后重试或打开官方栏目检查')
+                    report['warnings'].append(failure_reason(e, getattr(f,'phase','directory')))
                 finally:
+                    report['transport'] = getattr(f,'transport_mode','default')
                     f.session.close()
                     dates=report.pop('dates',[])
                     report['earliest']=min(dates) if dates else None

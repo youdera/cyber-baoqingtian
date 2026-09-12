@@ -1,15 +1,178 @@
 import json
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from scripts import cloud_watch
-from wuzhong.notices import NoticeEngine, NoticeStore, SOURCES, relevance
+from wuzhong.notices import NoticeEngine, NoticeStore, SOURCES, Stopped, relevance
 
 
 class CloudWatchTests(unittest.TestCase):
+    def test_source_rotation_uses_only_matching_acknowledged_checkpoint(self):
+        selected = [dict(id=value) for value in ('first', 'middle', 'last')]
+        marker = dict(next_source='middle')
+        self.assertEqual([source['id'] for source in cloud_watch.rotated_sources(selected, marker, False)],
+                         ['middle', 'last', 'first'])
+        self.assertEqual(cloud_watch.rotated_sources(selected, marker, True), selected)
+        self.assertEqual(cloud_watch.rotated_sources(selected, dict(next_source='removed'), False), selected)
+        self.assertEqual(cloud_watch.rotated_sources([], marker, False), [])
+
+    def test_timeout_waits_for_worker_then_reports_partial_and_rotates_after_ack(self):
+        started, engines, closed = [], [], []
+        slow = {'enabled': True}
+        class FakeFetcher:
+            def __init__(self, source, cancel):
+                self.source, self.cancel = source, cancel
+                self.calls = 0
+                self.session = Mock()
+                self.session.close.side_effect = lambda: closed.append(source['id'])
+                started.append(source['id'])
+            def get(self, url):
+                self.calls += 1
+                if self.source['id'] == 'stats' and self.calls > 1 and slow['enabled']:
+                    if not self.cancel.wait(3):
+                        raise AssertionError('The cloud deadline did not cancel the simulated slow page')
+                    raise Stopped()
+                count = 11 if self.source['id'] == 'stats' else 1
+                current = self.calls - 1
+                return f'''<script>m_nRecordCount={count};m_nPageSize=10;m_nCurrPage={current};</script>
+                <li><a href="./202609/t20260901_{123+current}.html">2026年模拟单位拟录用公示</a><span>2026-09-01</span></li>'''
+        def engine(store, directory):
+            instance = NoticeEngine(store, directory, FakeFetcher)
+            engines.append(instance)
+            return instance
+        original_write = Path.write_text
+        artifact_writes = []
+        def write_after_exit(path, *args, **kwargs):
+            if path.parent.name == 'artifacts':
+                self.assertFalse(engines[-1].lock.locked())
+                self.assertFalse(engines[-1].state['running'])
+                self.assertEqual(started, closed)
+                artifact_writes.append(path.name)
+            return original_write(path, *args, **kwargs)
+        previous = Path.cwd()
+        with tempfile.TemporaryDirectory() as root:
+            try:
+                os.chdir(root)
+                Path('watch.json').write_text(json.dumps(dict(year_from=2026)), encoding='utf-8')
+                with patch.object(cloud_watch, 'NoticeEngine', side_effect=engine), \
+                     patch.object(cloud_watch, 'SCAN_TIMEOUT_SECONDS', 0.2), \
+                     patch.object(cloud_watch, 'CANCEL_GRACE_SECONDS', 1), \
+                     patch('wuzhong.notices.SOURCES', SOURCES[:2]), \
+                     patch.object(Path, 'write_text', write_after_exit), \
+                     patch.dict(os.environ, {'GITHUB_OUTPUT': '', 'GITHUB_STEP_SUMMARY': ''}):
+                    cloud_watch.run('state', 'watch.json')
+                    self.assertEqual(started, ['stats'])
+                    self.assertEqual(set(artifact_writes), {'pending.json', 'report.md', 'alerts.json'})
+                    report = NoticeStore('state').all('runs')[0]
+                    self.assertEqual(report['status'], 'partial')
+                    self.assertTrue(report['budget_exhausted'])
+                    self.assertEqual([(source['id'], source['status'], source['pages']) for source in report['sources']],
+                                     [('stats', 'partial', 1), ('fujian', 'not_checked', 0)])
+                    pending = json.loads(Path('artifacts/pending.json').read_text())
+                    self.assertEqual(pending['baseline']['next_source'], 'fujian')
+                    self.assertTrue(report['sources'][0]['incomplete_scan'])
+                    self.assertEqual(pending['baseline']['sources'], [])
+                    self.assertFalse(Path('state/baseline.json').exists())
+                    self.assertIn('不是从中断页续采', Path('artifacts/report.md').read_text(encoding='utf-8'))
+                    cloud_watch.acknowledge('state')
+                    self.assertEqual(json.loads(Path('state/baseline.json').read_text())['next_source'], 'fujian')
+                    cloud_watch.run('state', 'watch.json')
+                    self.assertEqual(started, ['stats', 'fujian', 'stats'])
+                    pending = json.loads(Path('artifacts/pending.json').read_text())
+                    self.assertEqual(pending['baseline']['sources'], ['fujian'])
+                    self.assertEqual(pending['baseline']['next_source'], 'stats')
+                    self.assertEqual(json.loads(Path('state/baseline.json').read_text())['next_source'], 'fujian')
+                    cloud_watch.acknowledge('state')
+                    self.assertEqual(json.loads(Path('state/baseline.json').read_text())['next_source'], 'stats')
+                    slow['enabled'] = False
+                    cloud_watch.run('state', 'watch.json')
+                    self.assertEqual(started, ['stats', 'fujian', 'stats', 'stats', 'fujian'])
+                    self.assertEqual(json.loads(Path('artifacts/pending.json').read_text())['baseline']['sources'], ['fujian', 'stats'])
+                    self.assertEqual(NoticeStore('state').all('alerts'), [])
+            finally:
+                os.chdir(previous)
+
+    def test_cancel_grace_failure_does_not_export_or_advance_old_baseline(self):
+        engine = Mock()
+        engine.lock.acquire.return_value = False
+        engine.cancel = threading.Event()
+        engine.state = {'message': '模拟无法结束的请求'}
+        previous = Path.cwd()
+        with tempfile.TemporaryDirectory() as root:
+            try:
+                os.chdir(root)
+                Path('watch.json').write_text(json.dumps(dict(year_from=2026)), encoding='utf-8')
+                Path('state').mkdir()
+                Path('state/baseline.json').write_text('{"filters":"older","next_source":"stats"}')
+                Path('artifacts').mkdir()
+                for name in ('pending.json', 'report.md', 'alerts.json'):
+                    (Path('artifacts')/name).write_text('stale previous run')
+                with patch.object(cloud_watch, 'NoticeEngine', return_value=engine), \
+                     patch.object(cloud_watch, 'SCAN_TIMEOUT_SECONDS', 1), \
+                     patch.object(cloud_watch, 'CANCEL_GRACE_SECONDS', 1), \
+                     patch.object(cloud_watch.time, 'monotonic', side_effect=range(20)), \
+                     patch('wuzhong.notices.SOURCES', SOURCES[:1]):
+                    with self.assertRaisesRegex(RuntimeError, '采集线程未及时退出'):
+                        cloud_watch.run('state', 'watch.json')
+                self.assertTrue(engine.cancel.is_set())
+                engine.lock.release.assert_not_called()
+                self.assertEqual(Path('state/baseline.json').read_text(), '{"filters":"older","next_source":"stats"}')
+                self.assertEqual(list(Path('artifacts').iterdir()), [])
+            finally:
+                os.chdir(previous)
+
+    def test_last_interrupted_source_is_resumed_when_no_sources_are_unvisited(self):
+        selected = [dict(id=value, name=value) for value in ('a', 'b')]
+        report = dict(status='cancelled', sources=[
+            dict(id='a', status='completed', pages=1, warnings=[]),
+            dict(id='b', status='cancelled', pages=0, warnings=[])])
+        self.assertEqual(cloud_watch.finish_report(report, selected, True), 'b')
+        self.assertEqual(report['sources'][1]['status'], 'not_checked')
+        self.assertEqual(report['status'], 'partial')
+
+    def test_network_error_after_budget_cancel_keeps_last_partial_source_uninitialized(self):
+        selected = [dict(id=value, name=value) for value in ('a', 'b')]
+        report = dict(status='cancelled', sources=[
+            dict(id='a', status='partial', pages=1, warnings=['模拟请求读取超时'])])
+        self.assertEqual(cloud_watch.finish_report(report, selected, True), 'b')
+        self.assertTrue(report['sources'][0]['incomplete_scan'])
+        self.assertTrue(report['sources'][0]['budget_exhausted'])
+        self.assertIn('模拟请求读取超时', report['sources'][0]['warnings'])
+
+    def test_full_scan_rotation_does_not_create_health_change_notification(self):
+        started = []
+        class FakeFetcher:
+            def __init__(self, source, cancel):
+                self.session = Mock()
+                started.append(source['id'])
+            def get(self, url):
+                return '''<script>m_nRecordCount=1;m_nPageSize=10;m_nCurrPage=0;</script>
+                <li><a href="./202609/t20260901_123.html">2026年模拟单位拟录用公示</a><span>2026-09-01</span></li>'''
+        previous = Path.cwd()
+        with tempfile.TemporaryDirectory() as root:
+            try:
+                os.chdir(root)
+                Path('watch.json').write_text(json.dumps(dict(year_from=2026)), encoding='utf-8')
+                def engine(store, directory): return NoticeEngine(store, directory, FakeFetcher)
+                with patch.object(cloud_watch, 'NoticeEngine', side_effect=engine), \
+                     patch('wuzhong.notices.SOURCES', SOURCES[:2]), \
+                     patch.dict(os.environ, {'GITHUB_OUTPUT': str(Path(root)/'output.txt'), 'GITHUB_STEP_SUMMARY': ''}):
+                    cloud_watch.run('state', 'watch.json')
+                    cloud_watch.acknowledge('state')
+                    marker = json.loads(Path('state/baseline.json').read_text())
+                    marker['next_source'] = 'fujian'
+                    marker['health'] = json.dumps(list(reversed(json.loads(marker['health']))))
+                    Path('state/baseline.json').write_text(json.dumps(marker))
+                    cloud_watch.run('state', 'watch.json')
+                    self.assertEqual(started, ['stats', 'fujian', 'fujian', 'stats'])
+                    self.assertTrue(Path('output.txt').read_text().endswith('notify=false\n'))
+            finally:
+                os.chdir(previous)
+
     def test_independent_time_filters_and_report(self):
         """A 2025 exam announced in 2026 must work with either time dimension."""
         class FakeFetcher:
@@ -153,7 +316,7 @@ class CloudWatchTests(unittest.TestCase):
                 with patch.object(cloud_watch, 'NoticeEngine', side_effect=engine), patch('wuzhong.notices.SOURCES', SOURCES[:2]), patch.dict(os.environ, {'GITHUB_OUTPUT': '', 'GITHUB_STEP_SUMMARY': ''}):
                     cloud_watch.run('state', 'watch.json')
                     self.assertEqual(json.loads(Path('artifacts/pending.json').read_text())['baseline']['sources'], ['stats'])
-                    self.assertIn('本轮未读到目录，尚未建立基线', Path('artifacts/report.md').read_text(encoding='utf-8'))
+                    self.assertIn('本轮未读到目录或检查提前中断，尚未建立基线', Path('artifacts/report.md').read_text(encoding='utf-8'))
                     cloud_watch.acknowledge('state')
                     failed.clear()
                     cloud_watch.run('state', 'watch.json')

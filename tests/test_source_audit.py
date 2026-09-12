@@ -16,15 +16,15 @@ from wuzhong.notices import SOURCES
 class SourceAuditTests(unittest.TestCase):
     def test_catalog_is_fixed_unique_https_and_separates_candidates(self):
         rows=catalog()
-        self.assertEqual(len(rows),76)
+        self.assertGreater(len(rows),len(SOURCES))
         self.assertEqual(len({x['id'] for x in rows}),len(rows))
-        self.assertEqual(sum(x['enabled'] for x in rows),18)
+        self.assertEqual(sum(x['enabled'] for x in rows),len(SOURCES))
         self.assertTrue(all(urlparse(x['url']).scheme=='https' for x in rows))
         for source in rows:
             host=urlparse(source['url']).hostname
             if not host.endswith('.gov.cn'):
-                self.assertEqual(host,'www.scpta.com.cn')
-                self.assertEqual(source['provenance'],'https://rst.sc.gov.cn/')
+                self.assertIn(host,{'www.scpta.com.cn','www.lnrsks.com','www.gxpta.com.cn','www.nxpta.com'})
+                self.assertTrue(urlparse(source['provenance']).hostname.endswith('.gov.cn'))
             if source.get('listing_url'):
                 self.assertEqual(urlparse(source['listing_url']).scheme,'https')
                 self.assertEqual(urlparse(source['listing_url']).hostname,host)
@@ -38,7 +38,9 @@ class SourceAuditTests(unittest.TestCase):
                 accessed.append(url)
                 return '''<title>模拟官方门户</title><a href="/jobs/">事业单位公开招聘</a>
                 <a href="/private.xlsx">拟聘公示</a><a href="https://example.com/jobs/">招聘公告</a>
-                <a href="/article/">2026年招聘公告</a><table><td>虚构个人字段不得保存</td></table>'''
+                <a href="/article/">2026年招聘公告</a><a href="/news/content/post_42.html">招录情况公示</a>
+                <a href="http://www.stats.gov.cn/jobs/">事业单位公开招聘</a>
+                <table><td>虚构个人字段不得保存</td></table>'''
         source=dict(id='test',name='模拟',url='https://www.stats.gov.cn/',enabled=False,portal=True)
         result=probe(source,threading.Event(),FakeFetcher)
         self.assertEqual(accessed,[source['url']])
@@ -76,7 +78,7 @@ class SourceAuditTests(unittest.TestCase):
     def test_api_auth_and_shared_collection_lock(self):
         with tempfile.TemporaryDirectory() as root:
             app=create_app(root);client=app.test_client();state=client.get('/api/notices/state').json
-            self.assertEqual(len(state['catalog']),76)
+            self.assertEqual({s['id'] for s in state['catalog'] if s['enabled']},{s['id'] for s in SOURCES})
             self.assertEqual(client.post('/api/notices/source-audit').status_code,403)
             engine=app.extensions['engine'];engine.lock.acquire()
             try:self.assertEqual(client.post('/api/notices/source-audit',headers={'X-Local-Token':state['token']}).status_code,409)

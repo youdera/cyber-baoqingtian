@@ -40,14 +40,26 @@ GKML_SOURCES = [
     _source('yangjiang_civil', '阳江人社局 · 公务员招考', '阳江市人力资源和社会保障局',
             'https://www.yangjiang.gov.cn/yjrsj', 662018, 318, '公务员招考', '省考',
             '2026-09-12核验当前目录14条、栏目计数43条'),
+    _source('shantou_recruitment', '汕头人社局 · 招考录用', '汕头市人力资源和社会保障局',
+            'https://www.shantou.gov.cn/stsrlsbj', 754019, 3283, '招考录用', '',
+            '2026-09-12核验当前目录2252条、栏目计数3205条'),
+    _source('huizhou_recruitment', '惠州人社局 · 事业单位招考信息', '惠州市人力资源和社会保障局',
+            'https://rsj.huizhou.gov.cn', 752020, 588, '事业单位招考信息', '事业单位',
+            '2026-09-12核验当前目录205条、栏目计数419条'),
+    _source('zhongshan_recruitment', '中山人社局 · 人员招聘', '中山市人力资源和社会保障局',
+            'https://hrss.zs.gov.cn', 760005, 3265, '人员招聘', '',
+            '2026-09-12核验当前目录21条、栏目计数2679条'),
+    _source('shenzhen_recruitment', '深圳人社局 · 人员招录', '深圳市人力资源和社会保障局',
+            'https://hrss.sz.gov.cn', 755011, 24007, '人员招录', '',
+            '2026-09-13经TLS曲线兼容重试核验当前目录135条、栏目计数217条'),
 ]
 
 _SOURCE_IDS = {s['id'] for s in GKML_SOURCES}
 
 
-def _integer(value, name, minimum=0):
+def _integer(value, name, minimum=0, maximum=10_000_000):
     # Booleans, strings and fractional values signal a changed JSON contract.
-    if type(value) is not int or not minimum <= value <= 10_000_000:
+    if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError(f'公开目录{name}无效，需要维护来源')
     return value
 
@@ -136,29 +148,29 @@ def parse_gkml(html, source, url):
     for article in articles:
         if not isinstance(article, dict):
             raise ValueError('公开目录含无效条目，需要维护来源')
-        _integer(article.get('id'), '公告编号', 1)
+        _integer(article.get('id'), '公告编号', 1, 2**53-1)
         if article.get('classify_main') != source['gkml_column']:
             raise ValueError('公开目录条目不属于已核验招录栏目')
         title = article.get('title')
-        if not isinstance(title, str) or not 6 <= len(title.strip()) <= 500:
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 500:
             raise ValueError('公开目录公告标题缺失或异常，需要维护来源')
         title = title.strip()
-        # A directory can include references to another publisher. The shared
-        # index currently assigns one source to each canonical URL, so importing
-        # such references would overwrite that publisher's provenance. Keep the
-        # exclusion explicit in the source warning and still use the ORIGINAL
-        # row count for pagination, never the filtered output count.
+        # External references have not been verified as fixed official sources.
+        # Keep that exclusion explicit and use the original row count for paging.
         if article.get('type') == 'url':
             continue
         target = _article_url(article, source)
         if target in seen:
             raise ValueError('公开目录页内出现重复公告，不能当作已查完')
         seen.add(target)
+        kind = source['kind'] or ('省考' if '公务员' in title else '事业单位' if '事业单位' in title else '')
+        if re.search('编外|非编', title): kind = ''
         rows.append(dict(
             id=hashlib.sha256(target.encode()).hexdigest(), source_id=source['id'],
             source=source['name'], owner=source['owner'], title=title, url=target,
             published=_published(article.get('create_time')),
-            exam_year=exam_year_from_title(title), kind=source['kind'],
+            exam_year=exam_year_from_title(title),
+            kind=kind,
             region=source['region'], stage=stage(title),
         ))
 

@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from .notices import Fetcher, Stopped, listing, now
 from .source_catalog import catalog
+from .http_transport import failure_reason
 
 
 def probe(source, cancel, fetcher=Fetcher):
@@ -31,8 +32,12 @@ def probe(source, cancel, fetcher=Fetcher):
                 parsed = urlparse(target)
                 # Discover navigation only, not announcements or attachments.
                 if not 2 <= len(title) <= 24 or not labels.search(title) or re.search(r'20\d{2}|公示名单', title): continue
-                if parsed.scheme != 'https' or parsed.hostname != urlparse(source['url']).hostname or parsed.port not in (None,443) or parsed.username or parsed.password: continue
+                if parsed.scheme not in ('http','https') or parsed.hostname != urlparse(source['url']).hostname or parsed.port not in (None,443) or parsed.username or parsed.password: continue
+                # Official HTTPS portals sometimes retain HTTP navigation hrefs.
+                # Probe only the same-host HTTPS equivalent, still as a candidate.
+                target = parsed._replace(scheme='https').geturl()
                 if re.search(r'\.(pdf|docx?|xlsx?|zip|rar)(?:$|\?)', target, re.I): continue
+                if re.search(r'/content/|post_\d|/t\d{8}_|/art_\d|/article(?:_|/)|/c/\d{4}-\d{2}-\d{2}/', parsed.path, re.I): continue
                 found[target] = dict(title=title, url=target)
             result.update(status='portal_checked' if soup.title else 'needs_adapter', discovered=list(found.values()),
                           reason=f'门户首页发现{len(found)}个候选栏目链接；尚未接入公告索引，也未跟进读取这些链接。')
@@ -48,19 +53,10 @@ def probe(source, cancel, fetcher=Fetcher):
             result.update(status='needs_adapter', reason='发现动态目录加载标记，需要适配公开目录接口。' if dynamic else str(error))
     except Stopped:
         result.update(status='cancelled', reason='巡检已停止。')
-    except requests.exceptions.SSLError:
-        result['reason'] = 'TLS验证或握手失败；未关闭证书验证。'
-    except requests.Timeout:
-        result['reason'] = '请求超时；不等于该栏目没有公告。'
-    except requests.HTTPError as error:
-        result['reason'] = f'官网返回HTTP {error.response.status_code}。'
-    except requests.ConnectionError:
-        result['reason'] = '连接失败或远端断开。'
-    except ValueError as error:
-        result['reason'] = str(error)
-    except Exception:
-        result['reason'] = '巡检未完成，请检查运行环境。'
+    except Exception as error:
+        result['reason'] = failure_reason(error, getattr(reader,'phase','directory'))
     finally:
+        result['transport'] = getattr(reader,'transport_mode','default')
         reader.session.close()
     return result
 

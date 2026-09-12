@@ -34,6 +34,17 @@ def parse(payload, page=1, source=SOURCE):
 
 
 class GkmlSourceTests(unittest.TestCase):
+    def test_large_valid_document_ids_and_short_titles_are_preserved(self):
+        data=response(total=1);data['articles']=[entry(12895164)]
+        data['articles'][0]['title']='招聘公告'
+        rows,_=parse(data)
+        self.assertTrue(rows[0]['url'].endswith('post_12895164.html'))
+        self.assertEqual(rows[0]['title'],'招聘公告')
+
+    def test_explicit_non_establishment_posts_keep_type_unconfirmed(self):
+        data=response(total=1);data['articles'][0]['title']='模拟事业单位2026年招聘编外工作人员公告'
+        self.assertEqual(parse(data)[0][0]['kind'],'')
+
     def test_metadata_only_and_independent_publication_exam_year(self):
         rows, nxt = parse(response())
         self.assertEqual(len(rows), 100)
