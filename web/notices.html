@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="无终恨意：本地招录公告浏览、来源覆盖检查与公示监督工具。">
+  <title>无终恨意 · 初号机</title>
+  <link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/theme.css">
+  <script defer src="/assets/notices.js"></script>
+  <script defer src="/assets/guide.js"></script>
+  <script defer src="/assets/alerts.js"></script>
+</head>
+<body>
+  <aside class="rail">
+    <a class="brand" href="/"><span class="seal item-icon" aria-label="无终恨意装备图标"><img src="https://ddragon.leagueoflegends.com/cdn/16.17.1/img/item/2502.png" alt="无终恨意" width="48" height="48"></span><span>无终恨意<small>WUZHONG HENYI</small></span></a>
+    <p class="motto">以直报怨，以德报德。<br><span>——《论语·宪问》</span></p>
+    <div class="edition"><span>LOCAL / OPEN SOURCE</span><strong>初号机 <b>01</b></strong></div>
+    <nav aria-label="主导航">
+      <button class="nav active" data-tab="browse">公告查询</button>
+      <button class="nav" data-tab="saved">关注与闹钟</button>
+      <button class="nav" data-tab="alerts">新公示提醒 <span id="alert-badge"></span></button>
+      <button class="nav" data-tab="sources">来源与覆盖</button>
+      <button class="nav" data-tab="runs">检查记录</button>
+      <button class="nav" data-tab="guide">证据与举报</button>
+    </nav>
+    <div class="rail-bottom">本地公告浏览 · 0.2</div>
+  </aside>
+  <main>
+    <header class="topbar"><div><span class="eyebrow">无终恨意 · 本地工具</span><span class="build">v0.2.0 / 本地版</span></div><span id="connection">正在连接本地服务</span></header>
+    <div id="scan-banner" class="scan-banner" hidden><span class="spinner"></span><span id="scan-message"></span><button id="stop-scan">停止扫描</button></div>
+
+    <section id="browse" class="view active">
+      <div class="page-heading"><h1>查询招录公告</h1></div>
+      <form id="notice-form" class="quick-form">
+        <div class="form-grid"><label>公示发布 · 开始月份<input type="month" name="month_from" required></label><label>结束月份<input type="month" name="month_to" required></label></div>
+        <div class="form-grid"><label>招录类型<select name="kind"><option value="">全部类型</option><option>国考</option><option>省考</option><option>事业单位</option></select></label><label>公告适用地区<select name="region" id="region-select"><option value="">不限地区</option></select></label></div>
+        <div class="form-grid"><label>公告范围<select name="notice_scope"><option value="public">录聘公示及更正、撤销</option><option value="all">全部招录阶段</option></select></label><label>发布栏目<select name="source_id" id="source-select"><option value="">全部已接入栏目</option></select></label></div>
+        <details class="more-options" open><summary>招考年度范围（选填；查单年时两栏填同一年）</summary><div class="form-grid"><label>开始年份<input type="number" name="year_from" min="1000" max="9999" placeholder="例如 2015"></label><label>结束年份<input type="number" name="year_to" min="1000" max="9999" placeholder="例如 2026"></label></div><p>包含首尾年份；留空则不限招考年度。</p></details>
+        <div class="query-submit"><button class="primary" type="submit" id="search-submit">查询公示并检查更新</button><button type="button" id="save-query" disabled>关注并设置闹钟</button></div>
+        <p id="query-error" role="alert"></p>
+      </form>
+      <div class="notice-query-summary"><p id="date-summary"></p><p id="coverage-summary">仅查询“来源与覆盖”中已接入的官方栏目；地区选项不代表该地区已完整覆盖。</p><p id="query-status" role="status"></p></div>
+      <div class="filters"><label>显示<select id="notice-filter"><option value="matched">符合条件</option><option value="review">信息待核对</option><option value="all">全部已筛选结果</option></select></label><label>公告阶段<select id="stage-filter"><option value="">全部阶段</option><option>录聘公示</option><option>更正／补充</option><option>撤销通知</option><option>面试通知</option><option>体检／考察</option><option>考试通知</option><option>招录信息</option></select></label><label class="check"><input id="changed-filter" type="checkbox">仅看元数据有更新</label><span id="notice-count">0份公告</span></div>
+      <p class="field-note">阶段由公告标题初步识别，以原文为准；录聘公示不等于已入职。更新指本机检测到标题等元数据变化，不包括附件内容变化。以上筛选仅影响当前结果，不随查询条件保存。</p><div id="notice-list"></div>
+    </section>
+    <section id="saved" class="view"><div class="page-heading"><h1>关注与闹钟</h1></div><div id="saved-list"></div></section>
+    <section id="alerts" class="view"><div class="page-heading"><h1>新公示提醒</h1></div><p>显示开启闹钟后新发现或发生元数据变化的公告，历史补采也可能产生提醒。未知年份、地区等信息会标为待核对。</p><div class="query-submit"><button id="enable-browser-alerts">开启此浏览器通知</button><button id="read-alerts">本页提醒标为已读</button></div><p id="browser-alert-status" role="status">浏览器通知需要页面保持打开；关闭网页后，站内提醒仍由运行中的本机服务保存。</p><div id="alert-list"></div></section>
+    <section id="sources" class="view"><div class="page-heading"><h1>来源与覆盖</h1></div><div id="source-list"></div></section>
+    <section id="runs" class="view"><div class="page-heading"><h1>检查记录</h1></div><div id="run-list"></div></section>
+    <section id="guide" class="view">
+      <div class="page-heading"><div><h1>把经历说清楚。<br>让材料有据可查。</h1><p>选择经历，整理证据，再向有权处理的单位反映。</p></div><button id="download-all">下载完整材料包 ↓</button></div>
+      <div class="guide-route"><a href="#choose-experience">1 选择经历</a><a href="#material-downloads">2 准备材料</a><a href="#report-channels">3 提交与跟进</a></div>
+      <div class="guide-layout"><div class="guide-steps">
+        <section id="choose-experience"><h2>你经历了什么？</h2><p class="guide-lead">可以查看多种类型。只整理自己现在能确定的部分。</p><div id="type-guides"></div></section>
+        <section id="material-downloads" class="guide-block"><h2>六份可填写的模板</h2><div id="template-list"></div></section>
+        <section id="report-channels" class="guide-block"><h2>材料交给谁？</h2>
+          <details class="evidence-type"><summary>按事情选择渠道<span>展开 ＋</span></summary><div class="evidence-body"><ul>
+          <li><strong>学校处置与记录核查：</strong>向原学校负责学生事务的部门咨询；涉及学校处理问题，可向主管教育部门反映。大学与中小学程序不同，历史事件须询问适用流程。</li>
+          <li><strong>涉嫌违法犯罪：</strong>向公安机关说明具体经过及证据线索；受案后留存回执，受案不等于已经立案或认定责任。仍有紧迫危险时拨打110。</li>
+          <li><strong>网络内容：</strong>先保存现有材料，再按平台渠道申请处理内容并保留编号；平台处理不能替代警方调查或司法程序。</li>
+          <li><strong>招录公示期间：</strong>如有与招录条件相关的具体事实，按该公告列明的监督渠道和期限反映，注明身份尚不确定的部分。此渠道处理录聘事项，不能替代对原事件的调查或赔偿程序，也不保证取消录聘。</li>
+          <li><strong>不清楚该走哪条程序：</strong>携时间线、既往处理文书和证据目录向12348或律师咨询管辖、时效和救济方式，不必等到有人进入招录公示再求助。</li>
+          </ul></div></details>
+          <details class="evidence-type"><summary>提交前与提交后<span>展开 ＋</span></summary><div class="evidence-body"><ol>
+          <li>核对收件单位、官方地址、材料要求和公示期限。概述一件具体事件，把详细证据编号放在附件目录。</li>
+          <li>保留原件；提交副本按需要遮盖无关隐私。涉及敏感附件，先确认接收方式。请受理单位依法保护本人及证人信息。</li>
+          <li>留存材料版本、附件清单、发送记录和回执。送达、受理、立案与责任认定是不同阶段。</li>
+          <li>按告知时间跟进；没有回复先查送达与受理状态。补交新证据，避免向无关单位重复投递。</li>
+          <li>收到正式处理文书后，不服结果可带文书咨询适用救济途径及期限。页面不替具体案件判定证据效力或办理时限。</li>
+          </ol></div></details>
+        </section>
+        <details class="references guide-block"><summary>官方依据与适用范围 · 2026-09-12 核对</summary><p>取证步骤为一般整理建议；所列规则各有适用范围，不能将民事证据规则视为所有举报程序的统一标准。</p><div id="guide-sources"></div></details>
+      </div></div>
+    </section>
+<footer>无终恨意 <a href="https://developer.riotgames.com/docs/lol#data-dragon" target="_blank" rel="noreferrer">图标 © Riot Games</a><b>初号机 / 0.2.0</b></footer></main>
+<dialog id="save-dialog"><form id="save-form"><div class="dialog-head"><h2>关注条件与闹钟</h2><button type="button" id="close-save" aria-label="关闭">×</button></div><p id="save-range"></p><label class="check"><input type="checkbox" name="enabled">开启本机定时检查</label><label class="check"><input type="checkbox" name="notify_enabled" checked>新发现或更新公告时生成站内提醒</label><label>定时方式<select name="schedule_mode"><option value="daily">每天固定时间（北京时间）</option><option value="interval">按间隔检查</option></select></label><label>每天检查时间<input type="time" name="daily_time" value="09:00" required></label><label>间隔检查频率<select name="interval_hours"><option value="24">24小时</option><option value="12">12小时</option><option value="6">6小时</option></select></label><p>本机定时需要程序保持运行；关闭后不检查，重启后合并补查。日期范围固定，关注后续月份请将结束月份设到年底或所需月份。提醒条件采用上次查询范围，不含下方临时展示筛选。GitHub云端定时需另行配置仓库，网站保存不会同步到GitHub。</p><p id="save-error" role="alert"></p><button type="submit" class="primary">保存关注</button></form></dialog></body></html>

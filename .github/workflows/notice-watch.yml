@@ -1,0 +1,52 @@
+name: Official notice watch
+on:
+  workflow_dispatch:
+  schedule:
+    # UTC 01:17 = Beijing 09:17. GitHub may delay scheduled runs.
+    - cron: '17 1 * * *'
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: official-notice-watch
+  cancel-in-progress: false
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - uses: actions/cache/restore@v4
+        with:
+          path: data/cloud
+          key: notice-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: notice-state-v1-
+      - name: Check registered official sources
+        id: scan
+        run: python scripts/cloud_watch.py
+      - name: Notify via repository issue
+        if: steps.scan.outputs.notify == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: gh issue create --title "公示更新或来源状态变化" --body-file artifacts/report.md --assignee "$REPO_OWNER"
+      - name: Acknowledge delivered report
+        run: python scripts/cloud_watch.py --ack
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/cloud
+          key: notice-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: notice-report-${{ github.run_id }}
+          path: |
+            artifacts/report.md
+            artifacts/alerts.json
+          retention-days: 30
