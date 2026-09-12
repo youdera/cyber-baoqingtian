@@ -66,18 +66,34 @@ def validate_filters(data):
     region, kind = data.get('region', ''), data.get('kind', '')
     if region not in ['', *REGIONS] or kind not in ('', '国考', '省考', '事业单位'):
         raise ValueError('地区或招录类型无效')
+    area_scope = data.get('area_scope', 'all')
+    if area_scope not in ('all', 'province', 'national'):
+        raise ValueError('招录范围无效')
+    if area_scope == 'province' and not region:
+        raise ValueError('请选择省份')
+    if area_scope == 'national' and region:
+        raise ValueError('全国／中央招录不按省份筛选；岗位所在地请查看原文')
     source_id, scope = data.get('source_id', ''), data.get('notice_scope', 'all')
     if source_id not in ['', *[s['id'] for s in SOURCES]] or scope not in ('all', 'public'):
         raise ValueError('公告来源或范围无效')
-    return dict(month_from=start.strftime('%Y-%m'), month_to=end.strftime('%Y-%m'), date_from=start.isoformat(), date_to=end.replace(day=calendar.monthrange(end.year, end.month)[1]).isoformat(), year_from=year_from, year_to=year_to, region=region, kind=kind, source_id=source_id, notice_scope=scope)
+    return dict(month_from=start.strftime('%Y-%m'), month_to=end.strftime('%Y-%m'), date_from=start.isoformat(), date_to=end.replace(day=calendar.monthrange(end.year, end.month)[1]).isoformat(), year_from=year_from, year_to=year_to, region=region, kind=kind, source_id=source_id, notice_scope=scope, area_scope=area_scope)
+
+
+SOURCE_AREAS = {'stats': 'national', 'fujian': 'province', 'guangdong': 'province'}
+
+
+def area_matches(source_id, f):
+    return f.get('area_scope', 'all') == 'all' or SOURCE_AREAS.get(source_id) == f['area_scope']
 
 
 def compatible(source, f):
+    if not area_matches(source['id'], f): return False
     if f.get('source_id') and source['id'] != f['source_id']: return False
     return (not f['kind'] or not source['kind'] or f['kind'] == source['kind']) and (not f['region'] or not source['region'] or f['region'] == source['region'])
 
 
 def relevance(n, f):
+    if not area_matches(n.get('source_id'), f): return None
     if f.get('source_id') and n['source_id'] != f['source_id']: return None
     if f.get('notice_scope') == 'public' and stage(n['title']) not in ('录聘公示', '更正／补充', '撤销通知'): return None
     if n['published'] and not f['date_from'] <= n['published'] <= f['date_to']:

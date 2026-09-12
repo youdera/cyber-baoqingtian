@@ -11,6 +11,8 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 from wuzhong.notices import NoticeStore, NoticeEngine, SOURCES, REGIONS, compatible, relevance, validate_filters, now, stage, next_check
+from wuzhong.source_audit import SourceAuditor
+from wuzhong.source_catalog import catalog
 
 ROOT=Path(__file__).resolve().parent
 
@@ -20,7 +22,8 @@ def create_app(data_dir=None, schedule=False):
     app.config['MAX_CONTENT_LENGTH']=16_000
     store=NoticeStore(data_dir or os.environ.get('WUZHONG_DATA_DIR',ROOT/'data'))
     engine=NoticeEngine(store,ROOT)
-    app.extensions.update(store=store,engine=engine)
+    auditor=SourceAuditor(ROOT,store.path.parent,engine.lock)
+    app.extensions.update(store=store,engine=engine,auditor=auditor)
     token=secrets.token_urlsafe(32)
 
     @app.before_request
@@ -44,7 +47,17 @@ def create_app(data_dir=None, schedule=False):
     @app.get('/api/notices/state')
     def state():
         alerts=sorted(store.all('alerts'),key=lambda a:a['created'],reverse=True)
-        return jsonify(token=token,sources=SOURCES,regions=REGIONS,engine=engine.state,runs=sorted(store.all('runs'),key=lambda r:r['started'],reverse=True)[:30],saved=store.all('saved'),alerts=alerts[:200],unread=sum(not a['read'] for a in alerts),count=len(store.all('entries')),version='0.2.0')
+        return jsonify(token=token,sources=SOURCES,catalog=catalog(),source_audit=dict(auditor.state,report=auditor.latest()),regions=REGIONS,engine=engine.state,runs=sorted(store.all('runs'),key=lambda r:r['started'],reverse=True)[:30],saved=store.all('saved'),alerts=alerts[:200],unread=sum(not a['read'] for a in alerts),count=len(store.all('entries')),version='0.2.0')
+
+    @app.post('/api/notices/source-audit')
+    def source_audit():
+        if not auditor.start(): return jsonify(error='已有采集或巡检在运行'),409
+        return jsonify(ok=True)
+
+    @app.post('/api/notices/source-audit/stop')
+    def stop_source_audit():
+        auditor.cancel.set()
+        return jsonify(ok=True)
 
     @app.post('/api/notices/alerts/read')
     def read_alerts():

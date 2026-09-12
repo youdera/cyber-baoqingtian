@@ -1,0 +1,27 @@
+name: Official source catalog audit
+on:
+  workflow_dispatch:
+  schedule:
+    # Sunday 09:37 Beijing. Announcements themselves are checked daily separately.
+    - cron: '37 1 * * 0'
+permissions:
+  contents: read
+concurrency:
+  group: official-notice-watch
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python scripts/audit_sources.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-catalog-audit-${{ github.run_id }}
+          path: data/source-audit/
+          retention-days: 30

@@ -15,6 +15,21 @@ def fixture(page=0):
 
 
 class NoticeTests(unittest.TestCase):
+    def test_area_scope_filters_sources_and_legacy_entries(self):
+        from wuzhong.notices import compatible
+        base=dict(month_from='2024-02',month_to='2024-02')
+        provincial=validate_filters(dict(base,area_scope='province',region='广东'))
+        national=validate_filters(dict(base,area_scope='national'))
+        self.assertEqual([s['id'] for s in SOURCES if compatible(s,provincial)],['guangdong'])
+        self.assertEqual([s['id'] for s in SOURCES if compatible(s,national)],['stats'])
+        item=listing(fixture(),SOURCES[0],SOURCES[0]['url'])[0][0]
+        self.assertIsNone(relevance(item,provincial))
+        self.assertEqual(relevance(item,national),'matched')
+        self.assertEqual(relevance(item,validate_filters(base)),'matched')
+        self.assertIsNone(relevance(dict(item,source_id='unregistered'),national))
+        for extra in [dict(area_scope='province'),dict(area_scope='national',region='广东'),dict(area_scope='invalid')]:
+            with self.assertRaises(ValueError):validate_filters(dict(base,**extra))
+
     def test_query_reclassifies_stale_stage_without_changing_stored_notice(self):
         with tempfile.TemporaryDirectory() as d:
             app=create_app(d);client=app.test_client()

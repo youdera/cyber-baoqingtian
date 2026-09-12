@@ -33,3 +33,5 @@ footer{flex-wrap:wrap;align-items:center;font-size:13px}footer span{display:none
 .filters{flex-wrap:wrap;gap:14px}.filters+.field-note{line-height:1.8;margin:12px 0 20px}
 
 .nav #alert-badge{display:inline;color:inherit}.nav #alert-badge:empty{display:none}#alert-list{margin-top:20px}#browser-alert-status{margin:16px 0;line-height:1.8}#save-range{overflow-wrap:anywhere}
+
+#region-field[hidden] { display: none; }
