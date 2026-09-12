@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from wuzhong.notices import NoticeStore, NoticeEngine, validate_filters, now
+from wuzhong import notices
 
 
 def markdown(value):
@@ -31,6 +32,27 @@ def filter_summary(filters):
             '公告发布时间与招考年度分别筛选；同时设置时需同时符合。']
 
 
+def initialized_sources(previous):
+    """Read acknowledged per-source baselines, including the old health marker."""
+    if 'sources' in previous:
+        values = previous['sources']
+        return {value for value in values if isinstance(value, str) and value} if isinstance(values, list) else set()
+    health = previous.get('health')
+    if isinstance(health, str):
+        try:
+            health = json.loads(health)
+        except (json.JSONDecodeError, TypeError):
+            return set()
+    if not isinstance(health, list):
+        return set()
+    # Old health entries did not save page counts. completed/partial meant at
+    # least one parsed page in the old engine; failed/unknown stays uninitialized.
+    return {entry['id'] for entry in health
+            if isinstance(entry, dict) and isinstance(entry.get('id'), str) and entry['id']
+            and entry.get('status') in ('completed', 'partial')
+            and ('pages' not in entry or type(entry['pages']) is int and entry['pages'] > 0)}
+
+
 def run(folder, config):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     store=NoticeStore(folder)
@@ -39,8 +61,12 @@ def run(folder, config):
     marker=folder/'baseline.json'
     previous=json.loads(marker.read_text()) if marker.exists() else {}
     baseline=previous.get('filters')!=digest
+    known_sources=set() if baseline else initialized_sources(previous)
+    selected=[source for source in notices.SOURCES if notices.compatible(source,filters)]
+    initializing_sources={source['id'] for source in selected} - known_sources
     # This store is dedicated to a single cloud watch, never the local user's database.
-    store.put('saved',dict(id='cloud',enabled=True,notify_enabled=True,filters=filters))
+    store.put('saved',dict(id='cloud',enabled=True,notify_enabled=True,filters=filters,
+                          initializing_sources=sorted(initializing_sources)))
     engine=NoticeEngine(store,ROOT)
     engine.start(filters)
     deadline = time.monotonic() + 1500
@@ -55,6 +81,8 @@ def run(folder, config):
     health=[dict(id=s['id'],status=s['status'],warnings=s['warnings']) for s in report['sources']]
     health_key=json.dumps(health,sort_keys=True,ensure_ascii=False)
     changed_health=health_key!=previous.get('health')
+    read_sources={source['id'] for source in report['sources'] if source['pages'] > 0}
+    acknowledged_sources=known_sources | read_sources
     lines=['# 官方公示检查报告', '', f'检查时间（UTC）：{now()}',
            *filter_summary(filters), '',
            '仅覆盖已接入栏目；不读取名单附件、不查询个人。', '']
@@ -62,6 +90,16 @@ def run(folder, config):
         lines.append(f"- {markdown(s['name'])}：{s['status']}，{s['pages']}页、{s['found']}条目录记录。{markdown('；'.join(s['warnings']))}")
     if not health:lines.append('- 所选范围没有已接入来源。')
     lines.extend(['', '首次运行、缓存丢失或条件改变：建立基线，不逐条推送历史公告。' if baseline else f'未读公告提醒：{len(alerts)}条。'])
+    if initializing_sources:
+        ready=initializing_sources & read_sources
+        pending=initializing_sources - read_sources
+        lines.append('新增或尚未初始化的来源首次建立独立基线，不逐条推送历史公告；已有来源的正常更新提醒不受影响。')
+        if ready:
+            lines.append('本轮已读取目录、待报告确认后记为已初始化：'+
+                         '、'.join(markdown(source['name']) for source in selected if source['id'] in ready)+'。')
+        if pending:
+            lines.append('本轮未读到目录，尚未建立基线，下次继续首次检查：'+
+                         '、'.join(markdown(source['name']) for source in selected if source['id'] in pending)+'。')
     if not baseline:
         for a in alerts[:100]:
             label='信息待核对' if a['match_status']=='review' else '符合条件'
@@ -74,7 +112,7 @@ def run(folder, config):
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a',encoding='utf-8') as f:f.write(text)
     should_notify=bool((alerts and not baseline) or changed_health or baseline)
-    Path('artifacts/pending.json').write_text(json.dumps(dict(ids=[a['id'] for a in alerts],baseline=dict(filters=digest,health=health_key))),encoding='utf-8')
+    Path('artifacts/pending.json').write_text(json.dumps(dict(ids=[a['id'] for a in alerts],baseline=dict(filters=digest,health=health_key,sources=sorted(acknowledged_sources)))),encoding='utf-8')
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write(f'notify={str(should_notify).lower()}\n')
     print(f"status={report['status']}; alerts={len(alerts)}; baseline={baseline}")

@@ -14,7 +14,15 @@ CANDIDATES = [
 
 
 def catalog():
-    return [dict(s, enabled=True) for s in SOURCES] + [
+    entries = [dict(s, enabled=True) for s in SOURCES] + [
         dict(s, enabled=False, max_pages=1, history=False, note='候选入口：尚未接入正式公告索引，巡检只检查当前目录。')
         for s in CANDIDATES + DIRECTORY_SEEDS if s['id'] not in {enabled['id'] for enabled in SOURCES}
     ]
+    for entry in entries:
+        if not entry.get('portal'): continue
+        base = entry['url'].rstrip('/')
+        entry['linked_source_ids'] = [s['id'] for s in SOURCES
+            if s['url'].split('#')[0].rstrip('/') == base
+            or s['url'].startswith(base + '/')
+            or s.get('provenance', '').rstrip('/') == base]
+    return entries

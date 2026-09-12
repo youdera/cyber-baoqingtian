@@ -19,7 +19,8 @@ def probe(source, cancel, fetcher=Fetcher):
                   checked_at=now(), status='failed', recognized=0, reason='')
     reader = fetcher(source, cancel)
     try:
-        html = reader.get(source['url'])
+        listing_url = source.get('listing_url') or source['url']
+        html = reader.get(listing_url)
         if source.get('portal'):
             soup = BeautifulSoup(html, 'html.parser')
             found = {}
@@ -37,8 +38,8 @@ def probe(source, cancel, fetcher=Fetcher):
                           reason=f'门户首页发现{len(found)}个候选栏目链接；尚未接入公告索引，也未跟进读取这些链接。')
             return result
         try:
-            parse_source = dict(source, url=urljoin(source['url'], '.')) if source['url'].endswith('/index.html') else source
-            items, next_url = listing(html, parse_source, source['url'])
+            parse_source = dict(source, url=urljoin(source['url'], '.')) if not source['enabled'] and source['url'].endswith('/index.html') else source
+            items, next_url = listing(html, parse_source, listing_url)
             result.update(status='sample_ok' if source['enabled'] else 'candidate_sample', recognized=len(items),
                           reason='首页目录可解析；本次未核验后续分页和历史完整性。' if source['enabled'] else '当前页可识别样本，仍需分页适配和测试后才能加入正式索引。')
         except ValueError as error:

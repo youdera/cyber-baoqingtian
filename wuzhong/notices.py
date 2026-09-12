@@ -18,6 +18,17 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 from .extra_sources import EXTRA_SOURCES, parse_extra
+from .east_sources import EAST_SOURCES, parse_east
+from .west_sources import WEST_SOURCES, parse_west
+from .gkml_sources import GKML_SOURCES, parse_gkml
+
+DIRECTORY_ADAPTERS = {
+    source['id']: parser
+    for group, parser in [(EXTRA_SOURCES, parse_extra), (EAST_SOURCES, parse_east),
+                          (WEST_SOURCES, parse_west), (GKML_SOURCES, parse_gkml)]
+    for source in group
+}
+ADDITIONAL_SOURCES = [*EXTRA_SOURCES, *EAST_SOURCES, *WEST_SOURCES, *GKML_SOURCES]
 
 REGIONS = '北京 天津 河北 山西 内蒙古 辽宁 吉林 黑龙江 上海 江苏 浙江 安徽 福建 江西 山东 河南 湖北 湖南 广东 广西 海南 重庆 四川 贵州 云南 西藏 陕西 甘肃 青海 宁夏 新疆 兵团'.split()
 SOURCES = [
@@ -86,8 +97,8 @@ def validate_filters(data):
     return dict(month_from=start.strftime('%Y-%m') if start else None, month_to=end.strftime('%Y-%m') if end else None, date_from=start.isoformat() if start else None, date_to=end.replace(day=calendar.monthrange(end.year, end.month)[1]).isoformat() if end else None, year_from=year_from, year_to=year_to, region=region, kind=kind, source_id=source_id, notice_scope=scope, area_scope=area_scope)
 
 
-SOURCES.extend(EXTRA_SOURCES)
-SOURCE_AREAS = {'stats': 'national', 'fujian': 'province', 'guangdong': 'province', **{s['id']:s['area_scope'] for s in EXTRA_SOURCES}}
+SOURCES.extend(ADDITIONAL_SOURCES)
+SOURCE_AREAS = {'stats': 'national', 'fujian': 'province', 'guangdong': 'province', **{s['id']:s['area_scope'] for s in ADDITIONAL_SOURCES}}
 for _source in SOURCES:
     _source['area_scope'] = SOURCE_AREAS[_source['id']]
 
@@ -103,6 +114,9 @@ def compatible(source, f):
 
 
 def relevance(n, f):
+    if n.get('source_records'):
+        statuses = [relevance(view, f) for view in source_views(n)]
+        return 'matched' if 'matched' in statuses else 'review' if 'review' in statuses else None
     if not area_matches(n.get('source_id'), f): return None
     if f.get('source_id') and n['source_id'] != f['source_id']: return None
     if f.get('notice_scope') == 'public' and stage(n['title']) not in ('录聘公示', '更正／补充', '撤销通知'): return None
@@ -117,10 +131,20 @@ def relevance(n, f):
     return 'review' if (f.get('date_from') and not n['published']) or (f['year_from'] and not n['exam_year']) or (f['region'] and not n['region']) or (f['kind'] and not n['kind']) else 'matched'
 
 
+_STORED_FIELDS = {'source_records', 'revision', 'first_seen', 'checked_at', 'changed_at'}
+
+
+def source_views(notice):
+    """One URL may appear in several directories; retain each directory's evidence."""
+    common = {k: v for k, v in notice.items() if k != 'source_records'}
+    refs = notice.get('source_records') or {notice['source_id']: common}
+    return [dict(common, **ref) for ref in refs.values()]
+
+
 def stage(title):
     if re.search('撤销|撤回|取消招聘', title): return '撤销通知'
     if re.search('更正|调整|补充公告', title): return '更正／补充'
-    if re.search('拟.*(?:录用|聘用|聘人员|聘人选)|(?:录用|聘用).*公示', title): return '录聘公示'
+    if re.search('拟.*(?:录用|聘用|聘人员|聘人选)|拟聘(?:名单|公示)|拟录(?:人员|名单|公示)|(?:录用|聘用).*公示', title): return '录聘公示'
     if '面试' in title: return '面试通知'
     if re.search('体检|考察', title): return '体检／考察'
     if re.search('笔试|成绩', title): return '考试通知'
@@ -141,8 +165,8 @@ def exam_year_from_title(title):
 
 
 def listing(html, source, url):
-    if source['id'] in {s['id'] for s in EXTRA_SOURCES}:
-        return parse_extra(html, source, url)
+    if source['id'] in DIRECTORY_ADAPTERS:
+        return DIRECTORY_ADAPTERS[source['id']](html, source, url)
     soup = BeautifulSoup(html, 'html.parser')
     base = urlparse(source['url'])
     items = {}
@@ -305,22 +329,44 @@ class NoticeStore:
         with self.db() as db:
             row = db.execute('SELECT data FROM entries WHERE id=?',(item['id'],)).fetchone()
             prior=json.loads(row[0]) if row else None
-            changed=bool(prior and any(item[k] != prior.get(k) for k in item if k not in ('revision','first_seen','checked_at','changed_at')))
-            item=dict(item,first_seen=prior['first_seen'] if prior else now(),checked_at=now(),changed_at=now() if changed else prior.get('changed_at') if prior else None)
-            item['revision']=(prior.get('revision',1)+int(changed)) if prior else 1
-            db.execute('INSERT OR REPLACE INTO entries VALUES (?,?)',(item['id'],json.dumps(item,ensure_ascii=False)))
-            if not prior or changed:
+            incoming={k:v for k,v in item.items() if k not in _STORED_FIELDS}
+            refs={view['source_id']:dict(view) for view in source_views(prior)} if prior else {}
+            old_ref=refs.get(incoming['source_id'])
+            changed=bool(old_ref and incoming != {k:v for k,v in old_ref.items() if k not in _STORED_FIELDS})
+            new_ref=old_ref is None
+            # Keep the first source's top-level view for old consumers. Adding a
+            # second directory never overwrites that source or its metadata.
+            primary_id=prior['source_id'] if prior else incoming['source_id']
+            other_refs=[ref for sid,ref in refs.items() if sid != incoming['source_id']]
+            refs[incoming['source_id']]=dict(incoming,
+                first_seen=old_ref.get('first_seen',now()) if old_ref else now(),checked_at=now(),
+                changed_at=now() if changed else old_ref.get('changed_at') if old_ref else None,
+                revision=old_ref.get('revision',1)+int(changed) if old_ref else 1)
+            updated=bool(prior and (new_ref or changed))
+            stored=dict(refs[primary_id],source_records=refs,
+                        first_seen=prior['first_seen'] if prior else now(),checked_at=now(),
+                        changed_at=now() if updated else prior.get('changed_at') if prior else None,
+                        revision=prior.get('revision',1)+int(updated) if prior else 1)
+            db.execute('INSERT OR REPLACE INTO entries VALUES (?,?)',(stored['id'],json.dumps(stored,ensure_ascii=False)))
+            if new_ref or changed:
                 for row in db.execute('SELECT data FROM saved').fetchall():
                     saved = json.loads(row[0])
                     if not saved.get('enabled') or not saved.get('notify_enabled'): continue
-                    match = relevance(item, saved['filters'])
+                    if incoming['source_id'] in saved.get('initializing_sources',[]): continue
+                    match = relevance(incoming, saved['filters'])
                     if not match: continue
+                    # The same original notice, unchanged in another matching
+                    # directory, is not another notification for a broad watch.
+                    content_fields=('title','url','published','exam_year','kind','region')
+                    if any(all(ref.get(k)==incoming.get(k) for k in content_fields)
+                           and relevance(ref,saved['filters']) for ref in other_refs):
+                        continue
                     # revision distinguishes A -> B -> A from a repeated unchanged fetch.
-                    fingerprint = {k:v for k,v in item.items() if k not in ('first_seen','checked_at','changed_at')}
+                    fingerprint = dict(incoming,revision=refs[incoming['source_id']]['revision'])
                     alert_id = hashlib.sha256((saved['id'] + json.dumps(fingerprint,sort_keys=True)).encode()).hexdigest()
-                    alert = dict(id=alert_id,saved_id=saved['id'],created=now(),read=False,title=item['title'],url=item['url'],source=item['source'],published=item['published'],match_status=match,event='updated' if prior else 'new')
+                    alert = dict(id=alert_id,saved_id=saved['id'],source_id=incoming['source_id'],created=now(),read=False,title=incoming['title'],url=incoming['url'],source=incoming['source'],published=incoming['published'],match_status=match,event='updated' if old_ref else 'new')
                     db.execute('INSERT OR IGNORE INTO alerts VALUES (?,?)',(alert_id,json.dumps(alert,ensure_ascii=False)))
-        return (0 if prior else 1), int(changed)
+        return (0 if prior else 1), int(updated)
 
 
 class NoticeEngine:
@@ -354,21 +400,26 @@ class NoticeEngine:
                 report=dict(id=source['id'],name=source['name'],status='running',pages=0,found=0,dates=[],warnings=[])
                 run['sources'].append(report)
                 f=self.fetcher(source,self.cancel)
-                url=source['url'];seen=set()
+                url=source.get('listing_url') or source['url'];seen=set();page_keys=set();item_ids=set()
                 try:
                     while url and report['pages'] < source['max_pages']:
                         if url in seen: raise ValueError('分页出现循环，本轮未查完')
                         seen.add(url)
                         self.state['message']=f"正在检查{source['name']} · 第{report['pages']+1}页"
                         items,url=listing(f.get(url),source,url)
+                        page_key=tuple(sorted(item['id'] for item in items))
+                        if page_key and page_key in page_keys:
+                            raise ValueError('官网返回重复目录页，历史目录未查完')
+                        page_keys.add(page_key)
                         report['pages']+=1
                         for item in items:
                             n,u=self.store.record(item);run['new']+=n;run['updated']+=u
-                            report['found']+=1
+                            if item['id'] not in item_ids:report['found']+=1
+                            item_ids.add(item['id'])
                             if item['published']:report['dates'].append(item['published'])
                         self.store.put('runs',run)
                     if url:report['warnings'].append('达到分页上限，历史目录未查完')
-                    if not source['history']:report['warnings'].append('仅读取当前栏目首页，历史分页未接入')
+                    if not source['history']:report['warnings'].append(source.get('history_note') or '仅读取当前栏目首页，历史分页未接入')
                     report['status']='partial' if report['warnings'] else 'completed'
                 except Stopped:
                     report['status']='cancelled';raise

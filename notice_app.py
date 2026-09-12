@@ -10,7 +10,7 @@ import webbrowser
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
-from wuzhong.notices import NoticeStore, NoticeEngine, SOURCES, REGIONS, compatible, relevance, validate_filters, now, stage, next_check, exam_year_from_title
+from wuzhong.notices import NoticeStore, NoticeEngine, SOURCES, REGIONS, compatible, relevance, validate_filters, now, stage, next_check, exam_year_from_title, source_views
 from wuzhong.source_audit import SourceAuditor
 from wuzhong.source_catalog import catalog
 
@@ -78,9 +78,14 @@ def create_app(data_dir=None, schedule=False):
         except (ValueError,TypeError) as e:return jsonify(error=str(e)),400
         records=[]
         for n in store.all('entries'):
-            n=dict(n,exam_year=exam_year_from_title(n['title']))
-            status=relevance(n,f)
-            if status:records.append(dict(n,stage=stage(n['title']),match_status=status))
+            matches=[]
+            for view in source_views(n):
+                view=dict(view,exam_year=exam_year_from_title(view['title']))
+                status=relevance(view,f)
+                if status:matches.append(dict(view,stage=stage(view['title']),match_status=status))
+            if matches:
+                selected=next((v for v in matches if v['match_status']=='matched'),matches[0])
+                records.append(dict(selected,matching_sources=[{'id':v['source_id'],'name':v['source']} for v in matches]))
         records.sort(key=lambda n:(n['published'] or '',n['title']),reverse=True)
         return jsonify(filters=f,records=records,sources=[s for s in SOURCES if compatible(s,f)])
 

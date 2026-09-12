@@ -35,7 +35,9 @@ class SourceAdapterTests(unittest.TestCase):
         requested = []
         class FakeFetcher:
             def __init__(self, source, cancel): self.session = Mock()
-            def get(self, url): requested.append(url); return directory()
+            def get(self, url):
+                requested.append(url)
+                return directory().replace('post_123.html', f'post_{1000+len(requested)}.html')
         with tempfile.TemporaryDirectory() as root:
             engine = NoticeEngine(NoticeStore(root), root, FakeFetcher)
             with patch('wuzhong.notices.SOURCES', [GD]):

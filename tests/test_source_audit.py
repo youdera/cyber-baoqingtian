@@ -10,16 +10,25 @@ import requests
 from notice_app import create_app
 from wuzhong.source_audit import audit, probe
 from wuzhong.source_catalog import catalog
+from wuzhong.notices import SOURCES
 
 
 class SourceAuditTests(unittest.TestCase):
     def test_catalog_is_fixed_unique_https_and_separates_candidates(self):
         rows=catalog()
-        self.assertEqual(len(rows),64)
+        self.assertEqual(len(rows),76)
         self.assertEqual(len({x['id'] for x in rows}),len(rows))
-        self.assertEqual(sum(x['enabled'] for x in rows),6)
+        self.assertEqual(sum(x['enabled'] for x in rows),18)
         self.assertTrue(all(urlparse(x['url']).scheme=='https' for x in rows))
-        self.assertTrue(all(urlparse(x['url']).hostname.endswith('.gov.cn') for x in rows))
+        for source in rows:
+            host=urlparse(source['url']).hostname
+            if not host.endswith('.gov.cn'):
+                self.assertEqual(host,'www.scpta.com.cn')
+                self.assertEqual(source['provenance'],'https://rst.sc.gov.cn/')
+            if source.get('listing_url'):
+                self.assertEqual(urlparse(source['listing_url']).scheme,'https')
+                self.assertEqual(urlparse(source['listing_url']).hostname,host)
+        self.assertEqual({s['id'] for s in rows if s['enabled']},{s['id'] for s in SOURCES})
 
     def test_portal_probe_discovers_navigation_without_following_links(self):
         accessed=[]
@@ -35,6 +44,14 @@ class SourceAuditTests(unittest.TestCase):
         self.assertEqual(accessed,[source['url']])
         self.assertEqual(result['discovered'],[dict(title='事业单位公开招聘',url='https://www.stats.gov.cn/jobs/')])
         self.assertNotIn('个人字段',json.dumps(result,ensure_ascii=False))
+
+    def test_portals_show_partial_connections_without_becoming_collectors(self):
+        rows={s['id']:s for s in catalog()}
+        shanxi=rows['portal_3fd1bb7e59']
+        self.assertFalse(shanxi['enabled'])
+        self.assertEqual(set(shanxi['linked_source_ids']),{'shanxi_gwy','shanxi_sydw','shanxi_sydw_jobs'})
+        self.assertEqual(len(rows['portal_d1bc4e04bf']['linked_source_ids']),6)
+        self.assertEqual(rows['portal_b3edb90a87']['linked_source_ids'],['yangjiang_civil'])
 
     def test_probe_preserves_tls_failure(self):
         class FailingFetcher:
@@ -59,7 +76,7 @@ class SourceAuditTests(unittest.TestCase):
     def test_api_auth_and_shared_collection_lock(self):
         with tempfile.TemporaryDirectory() as root:
             app=create_app(root);client=app.test_client();state=client.get('/api/notices/state').json
-            self.assertEqual(len(state['catalog']),64)
+            self.assertEqual(len(state['catalog']),76)
             self.assertEqual(client.post('/api/notices/source-audit').status_code,403)
             engine=app.extensions['engine'];engine.lock.acquire()
             try:self.assertEqual(client.post('/api/notices/source-audit',headers={'X-Local-Token':state['token']}).status_code,409)

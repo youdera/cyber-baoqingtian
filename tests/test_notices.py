@@ -15,12 +15,22 @@ def fixture(page=0):
 
 
 class NoticeTests(unittest.TestCase):
+    def test_short_publication_title_forms_are_included_in_public_filter(self):
+        filters=validate_filters(dict(year_from=2026,notice_scope='public'))
+        item=listing(fixture(),SOURCES[0],SOURCES[0]['url'])[0][0]
+        for title in ['2026年模拟单位拟聘公示','2026年模拟单位拟录人员公示',
+                      '2026年模拟单位拟聘名单公示','2026年模拟单位拟录名单公示']:
+            with self.subTest(title=title):
+                self.assertEqual(stage(title),'录聘公示')
+                self.assertEqual(relevance(dict(item,title=title,exam_year=2026),filters),'matched')
+        self.assertNotEqual(stage('2026年模拟单位招聘报名公告'),'录聘公示')
+
     def test_area_scope_filters_sources_and_legacy_entries(self):
         from wuzhong.notices import compatible
         base=dict(month_from='2024-02',month_to='2024-02')
         provincial=validate_filters(dict(base,area_scope='province',region='广东'))
         national=validate_filters(dict(base,area_scope='national'))
-        self.assertEqual([s['id'] for s in SOURCES if compatible(s,provincial)],['guangdong'])
+        self.assertEqual([s['id'] for s in SOURCES if compatible(s,provincial)],['guangdong','zhaoqing_recruitment','zhaoqing_civil','yangjiang_civil'])
         self.assertEqual([s['id'] for s in SOURCES if compatible(s,national)],['stats'])
         item=listing(fixture(),SOURCES[0],SOURCES[0]['url'])[0][0]
         self.assertIsNone(relevance(item,provincial))

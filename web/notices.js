@@ -29,7 +29,8 @@ function syncScope(){
  $('#source-select').innerHTML='<option value="">全部已接入栏目</option>'+available.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');if(available.some(s=>s.id===source))$('#source-select').value=source;
  $('#area-help').textContent=scope==='national'?'按中央招录组织范围查询；岗位可能分布在各省，以原文为准。':scope==='province'?'按地方发布来源归属筛选；中央招录请单独选择。省份可选不代表已有来源覆盖。':'合并已接入来源，保留旧关注条件的查询范围。';
  const candidates=(state.catalog||[]).filter(s=>!s.enabled&&(scope==='all'||(scope==='province'?!!s.region:!s.region))&&(!region.value||s.region===region.value));
- $('#area-help').textContent+=` 当前条件有 ${available.length} 个已接入栏目、${candidates.length} 个待接入入口。`; 
+ const linked=candidates.filter(s=>s.linked_source_ids?.length).length;
+ $('#area-help').textContent+=` 当前条件有 ${available.length} 个已接入栏目、${candidates.length} 个仍需核验的入口${linked?`（其中${linked}个门户已接入部分栏目）`:''}。`; 
 }
 function applyFilters(f){$('#time-mode').value=f.month_from?(f.year_from?'both':'publication'):'exam';syncTime();$('#area-scope').value=f.area_scope||'all';$('#region-select').value=f.region||'';syncScope();for(const key of ['month_from','month_to','year_from','year_to','kind','source_id','notice_scope'])$('#notice-form').elements[key].value=f[key]??(key==='notice_scope'?'all':'');syncScope();$('#source-select').value=f.source_id||'';}
 $('#area-scope').onchange=syncScope;$('#region-select').onchange=syncScope;$('#kind-select').onchange=syncScope;
@@ -42,7 +43,7 @@ function renderRecords(){
  const selectedStage=$('#stage-filter').value,changedOnly=$('#changed-filter').checked;
  const shown=records.filter(n=>(mode==='all'||n.match_status===mode)&&(!selectedStage||n.stage===selectedStage)&&(!changedOnly||n.changed_at));
  $('#notice-count').textContent=`${shown.length}份公告`;
- updateHTML('#notice-list',shown.length?shown.map(n=>`<article class="result-card"><div class="result-top"><span class="tag">${esc(n.stage)}</span>${n.match_status==='review'?'<span class="tag amber">筛选信息待核对</span>':''}<span>${esc(n.published||'发布日期未知')} · ${esc(n.owner)}</span></div><h3><a href="${esc(n.url)}" target="_blank" rel="noreferrer">${esc(n.title)}</a></h3><div class="result-bottom"><span>${n.changed_at?`<strong>元数据更新：${esc(stamp(n.changed_at))}</strong> · `:''}${esc(n.kind||'类型待核对')} · ${esc(n.region||'地区以原文为准')}${n.exam_year?' · 招考'+n.exam_year+'年度（标题识别）':' · 招考年度待核对'}</span><a href="${esc(n.url)}" target="_blank" rel="noreferrer">查看官方原文与附件 ↗</a></div></article>`).join(''):`<div class="empty"><h3>${query?'本机暂无符合条件的公告':'先选择范围，再查询公告'}</h3><p>${query?'请结合本轮来源状态判断是否已经查完。':'公告会在检查过程中陆续显示。'}</p></div>`);
+ updateHTML('#notice-list',shown.length?shown.map(n=>`<article class="result-card"><div class="result-top"><span class="tag">${esc(n.stage)}</span>${n.match_status==='review'?'<span class="tag amber">筛选信息待核对</span>':''}<span>${esc(n.published||'发布日期未知')} · ${esc(n.owner)}</span></div><h3><a href="${esc(n.url)}" target="_blank" rel="noreferrer">${esc(n.title)}</a></h3><div class="result-bottom"><span>${n.matching_sources?.length>1?`<strong>收录于 ${n.matching_sources.length} 个栏目：</strong>${esc(n.matching_sources.map(s=>s.name).join('、'))} · `:''}${n.changed_at?`<strong>元数据更新：${esc(stamp(n.changed_at))}</strong> · `:''}${esc(n.kind||'类型待核对')} · ${esc(n.region||'地区以原文为准')}${n.exam_year?' · 招考'+n.exam_year+'年度（标题识别）':' · 招考年度待核对'}</span><a href="${esc(n.url)}" target="_blank" rel="noreferrer">查看官方原文与附件 ↗</a></div></article>`).join(''):`<div class="empty"><h3>${query?'本机暂无符合条件的公告':'先选择范围，再查询公告'}</h3><p>${query?'请结合本轮来源状态判断是否已经查完。':'公告会在检查过程中陆续显示。'}</p></div>`);
 }
 function render(){
  if(window.renderSourceCatalog)window.renderSourceCatalog(state);
