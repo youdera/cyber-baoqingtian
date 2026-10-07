@@ -27,6 +27,7 @@ from .expansion_east import EXPANSION_EAST_SOURCES, parse_expansion_east
 from .expansion_west import EXPANSION_WEST_SOURCES, parse_expansion_west
 from .expansion_south import EXPANSION_SOUTH_SOURCES, parse_expansion_south
 from .expansion_chongqing import EXPANSION_CHONGQING_SOURCES, parse_expansion_chongqing
+from .zhejiang_sources import ZHEJIANG_SOURCES, parse_zhejiang
 
 DIRECTORY_ADAPTERS = {
     source['id']: parser
@@ -36,13 +37,14 @@ DIRECTORY_ADAPTERS = {
                           (EXPANSION_EAST_SOURCES, parse_expansion_east),
                           (EXPANSION_WEST_SOURCES, parse_expansion_west),
                           (EXPANSION_SOUTH_SOURCES, parse_expansion_south),
-                          (EXPANSION_CHONGQING_SOURCES, parse_expansion_chongqing)]
+                          (EXPANSION_CHONGQING_SOURCES, parse_expansion_chongqing),
+                          (ZHEJIANG_SOURCES, parse_zhejiang)]
     for source in group
 }
 ADDITIONAL_SOURCES = [*EXTRA_SOURCES, *EAST_SOURCES, *WEST_SOURCES, *GKML_SOURCES,
                       *EXPANSION_NORTH_SOURCES, *EXPANSION_EAST_SOURCES,
                       *EXPANSION_WEST_SOURCES, *EXPANSION_SOUTH_SOURCES,
-                      *EXPANSION_CHONGQING_SOURCES]
+                      *EXPANSION_CHONGQING_SOURCES, *ZHEJIANG_SOURCES]
 
 REGIONS = '北京 天津 河北 山西 内蒙古 辽宁 吉林 黑龙江 上海 江苏 浙江 安徽 福建 江西 山东 河南 湖北 湖南 广东 广西 海南 重庆 四川 贵州 云南 西藏 陕西 甘肃 青海 宁夏 新疆 兵团'.split()
 SOURCES = [

@@ -63,7 +63,7 @@ EXPANSION_EAST_SOURCES = [
 ]
 _SOURCES = {s['id']: s for s in EXPANSION_EAST_SOURCES}
 _ANHUI = {'anhui_jobs': '6791573', 'anhui_college': '6791574', 'anhui_city': '6791575'}
-_ATTACHMENT = re.compile(r'\.(?:pdf|docx?|xlsx?|zip|rar|png|jpe?g|gif)$', re.I)
+_ATTACHMENT = re.compile(r'\.(?:pdf|docx?|xlsx?|et|zip|rar|png|jpe?g|gif)$', re.I)
 _RECRUITMENT = re.compile(r'公务员|招考|招录|招聘|遴选|选调|拟.*(?:录用|聘用|聘人员|聘人选)|(?:录用|聘用).*公示')
 
 
@@ -234,8 +234,13 @@ def parse_expansion_east(html, source, url):
         return _anhui(html, soup, source, url)
     if sid.startswith('shanghai_'):
         next_url = _static_pager(html, source, url, 'shanghai')
-        root = re.escape(urlparse(source['url']).path.rsplit('/', 1)[0])
-        rows, _ = _rows(soup, 'ul.uli14.list-date', source, root + r'/\d{8}/t\d+_\d+\.html', '.time')
+        roots = [urlparse(source['url']).path.rsplit('/', 1)[0]]
+        if sid == 'shanghai_jobs':
+            # This directory also republishes recruitment notices from the fixed
+            # general-notice column; no article body or extra directory is read.
+            roots.append('/tgsgg_17341')
+        pattern = '(?:' + '|'.join(map(re.escape, roots)) + r')/\d{8}/t\d+_\d+\.html'
+        rows, _ = _rows(soup, 'ul.uli14.list-date', source, pattern, '.time')
         return rows, next_url
     if sid.startswith('hubei_'):
         next_url = _static_pager(html, source, url, 'hubei')

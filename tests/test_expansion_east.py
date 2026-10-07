@@ -70,6 +70,38 @@ class ExpansionEastTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse('shanghai_hires', shanghai(2))
 
+    def test_shanghai_jobs_accepts_verified_same_site_republication(self):
+        html = shanghai(title='2026年度事业单位专项招聘公告').replace('/tnprygs_17409/', '/tgsgg_17341/')
+        rows, nxt = parse('shanghai_jobs', html)
+        self.assertEqual(rows[0]['url'], 'https://rsj.sh.gov.cn/tgsgg_17341/20260910/t0035_1.html')
+        self.assertEqual(rows[0]['source_id'], 'shanghai_jobs')
+        self.assertEqual(rows[0]['published'], '2026-09-11')
+        self.assertEqual(rows[0]['exam_year'], 2026)
+        self.assertEqual(nxt, SOURCES['shanghai_jobs']['url'].replace('index.html', 'index_2.html'))
+        with self.assertRaises(ValueError):
+            parse('shanghai_hires', html)
+
+    def test_shanghai_republication_does_not_allow_arbitrary_columns(self):
+        html = shanghai().replace('/tnprygs_17409/', '/tgsgg_17341/')
+        for path in ('/tgsgg_99999/', '/other/', '/tgsgg_17341/sub/'):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                parse('shanghai_jobs', html.replace('/tgsgg_17341/', path))
+
+    def test_shanghai_republication_origin_and_query_checks_remain_strict(self):
+        path = '/tgsgg_17341/20260910/t0035_1.html'
+        html = shanghai().replace('/tnprygs_17409/20260910/t0035_1.html', path)
+        for target in ('https://user@rsj.sh.gov.cn' + path,
+                       'https://rsj.sh.gov.cn:8443' + path,
+                       'http://rsj.sh.gov.cn:443' + path,
+                       path + '?download=1'):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                parse('shanghai_jobs', html.replace(path, target))
+        for target in ('https://rsj.sh.gov.cn.evil.example' + path,
+                       'https://outside.example' + path,
+                       'javascript:alert(1)'):
+            with self.subTest(target=target):
+                self.assertEqual(parse('shanghai_jobs', html.replace(path, target))[0], [])
+
     def test_empty_title_after_good_row_is_error(self):
         extra = '<li><a href="/tnprygs_17409/20260910/t0035_2.html"></a></li>'
         with self.assertRaises(ValueError):
@@ -111,6 +143,26 @@ class ExpansionEastTests(unittest.TestCase):
         rows, nxt = parse('hubei_gwy_notice', hubei(16, attachment=True), SOURCES['hubei_gwy_notice']['url'] + 'index_16.shtml')
         self.assertEqual(rows, [])
         self.assertIsNone(nxt)
+
+    def test_hubei_wps_spreadsheet_is_excluded_without_losing_page(self):
+        html = hubei().replace('</ul>', '<li><a href="./202609/P020260911000000.et" title="资格复审公告">资格复审公告</a></li></ul>')
+        for suffix in ('.et', '.ET'):
+            with self.subTest(suffix=suffix):
+                rows, nxt = parse('hubei_gwy_notice', html.replace('.et', suffix))
+                self.assertEqual(len(rows), 1)
+                self.assertTrue(rows[0]['url'].endswith('.shtml'))
+                self.assertTrue(nxt.endswith('index_1.shtml'))
+        rows, nxt = parse('hubei_gwy_notice', hubei(16, attachment=True).replace('.xlsx', '.et'),
+                          SOURCES['hubei_gwy_notice']['url'] + 'index_16.shtml')
+        self.assertEqual(rows, [])
+        self.assertIsNone(nxt)
+
+    def test_excluded_wps_attachment_does_not_bypass_origin_validation(self):
+        html = hubei(attachment=True).replace('.xlsx', '.et')
+        for target in ('https://user@rst.hubei.gov.cn/202609/file.et',
+                       'https://rst.hubei.gov.cn:8443/202609/file.et'):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                parse('hubei_gwy_notice', html.replace('./202609/P020260911000000.et', target))
 
     def test_date_inside_anchor_cannot_become_the_title(self):
         html = hubei(title='').replace('title=""', '')
